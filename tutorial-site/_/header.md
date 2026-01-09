@@ -9,6 +9,6 @@
 -->
 
 <div style="display: flex; justify-content: space-between; align-items: center;">
-  <strong>My Hugs Site</strong>
+  <strong>Hugs Documentation</strong>
   <span>(っ◕‿◕)っ</span>
 </div>

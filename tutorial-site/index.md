@@ -1,11 +1,13 @@
 ---
 title: Welcome
-description: Welcome to your new Hugs site
+description: Learn how to build sites with Hugs
 ---
 
 # Hey there!
 
-Welcome to your new site! I'm your homepage, living in `index.md`.
+Welcome to the Hugs documentation! I'm the homepage, and I'll help you learn how to build sites with Hugs.
+
+> **Tip:** You can open this documentation anytime by running `hugs doc` in your terminal!
 
 ## How This Page Works
 

@@ -10,7 +10,7 @@
 #
 
 [site]
-title = "My Hugs Site"
-description = "A site built with Hugs"
+title = "Hugs Documentation"
+description = "Learn how to build sites with Hugs"
 url = "https://example.com"
-author = "Your Name"
+author = "Hugs"

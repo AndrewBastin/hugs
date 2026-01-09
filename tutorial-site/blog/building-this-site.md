@@ -134,6 +134,20 @@ Next up: [Pages & Frontmatter](/blog/pages-and-frontmatter) - learn about...
 
 This creates a linear path through the content. Users can jump around via the blog index, but there's always a clear "what's next" for those following along.
 
+### Accessing These Docs
+
+This entire documentation site is embedded inside the Hugs binary itself. Running `hugs doc` extracts it to a temporary folder and serves it locally - no internet required!
+
+This means you can reference the docs anytime, anywhere:
+
+```bash
+hugs doc              # Opens docs in your browser
+hugs doc --port 9000  # Use a specific port
+hugs doc --no-open    # Don't auto-open browser
+```
+
+The docs stay available as long as the command runs. Press `Ctrl+C` to stop.
+
 ### Your Turn
 
 Hugs is designed to get out of your way. No complex build pipelines, no plugin ecosystems to navigate, no configuration rabbit holes. Just markdown files that become web pages.

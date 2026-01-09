@@ -402,6 +402,17 @@ pub enum HugsError {
         #[source]
         cause: std::io::Error,
     },
+
+    // === Doc Command Errors ===
+    #[error("I couldn't create a temporary directory for the documentation")]
+    #[diagnostic(
+        code(hugs::doc::temp_dir),
+        help("Make sure you have write permissions to the system temp directory.")
+    )]
+    DocTempDir {
+        #[source]
+        cause: std::io::Error,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, HugsError>;
@@ -1159,6 +1170,9 @@ impl Clone for HugsError {
                 cause: std::io::Error::new(cause.kind(), cause.to_string()),
             },
             HugsError::ServerRuntime { cause } => HugsError::ServerRuntime {
+                cause: std::io::Error::new(cause.kind(), cause.to_string()),
+            },
+            HugsError::DocTempDir { cause } => HugsError::DocTempDir {
                 cause: std::io::Error::new(cause.kind(), cause.to_string()),
             },
         }

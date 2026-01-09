@@ -6,6 +6,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod build;
 mod config;
 mod dev;
+mod doc;
 mod error;
 mod feed;
 mod highlight;
@@ -47,6 +48,16 @@ enum Command {
     New {
         /// Name for your new site folder (created in current directory)
         name: Option<PathBuf>,
+    },
+    /// Open the Hugs documentation in your browser
+    Doc {
+        /// Port to run the documentation server on
+        #[arg(short, long)]
+        port: Option<u16>,
+
+        /// Don't automatically open the browser
+        #[arg(long)]
+        no_open: bool,
     },
 }
 
@@ -90,6 +101,9 @@ async fn main() -> miette::Result<()> {
         }
         Command::New { name } => {
             crate::new::create_site(name).await?;
+        }
+        Command::Doc { port, no_open } => {
+            crate::doc::run_doc_server(port, no_open).await?;
         }
     }
 
