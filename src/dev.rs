@@ -65,17 +65,30 @@ impl PortChangedWarning {
 const LIVE_RELOAD_SCRIPT: &str = r#"<script>
 (function() {
     let reloading = false;
+    let wasConnected = false;
     function connect() {
         if (reloading) return;
         const ws = new WebSocket('ws://' + window.location.host + '/__hugs_live_reload');
+        ws.onopen = function() {
+            if (wasConnected && !reloading) {
+                console.log('[hugs] reconnected to dev server, reloading...');
+                reloading = true;
+                window.location.reload();
+            } else {
+                console.log('[hugs] connected to dev server');
+            }
+            wasConnected = true;
+        };
         ws.onmessage = function(event) {
             if (event.data === 'reload' && !reloading) {
+                console.log('[hugs] file change detected, reloading...');
                 reloading = true;
                 window.location.reload();
             }
         };
         ws.onclose = function() {
             if (!reloading) {
+                console.log('[hugs] disconnected from dev server, retrying in 1s...');
                 setTimeout(connect, 1000);
             }
         };
@@ -170,7 +183,7 @@ async fn sitemap(state: web::Data<Arc<DevAppState>>) -> HttpResponse {
             .body(xml),
         Err(e) => HttpResponse::InternalServerError()
             .content_type(ContentType::html())
-            .body(render_error_html(&e)),
+            .body(render_error_html(&e, LIVE_RELOAD_SCRIPT)),
     }
 }
 
@@ -275,7 +288,7 @@ async fn page(path: web::Path<String>, state: web::Data<Arc<DevAppState>>) -> Ht
                 }
                 Err(e) => HttpResponse::InternalServerError()
                     .content_type(ContentType::html())
-                    .body(render_error_html(&e)),
+                    .body(render_error_html(&e, LIVE_RELOAD_SCRIPT)),
             }
         }
         Ok(None) => {
@@ -301,14 +314,14 @@ async fn page(path: web::Path<String>, state: web::Data<Arc<DevAppState>>) -> Ht
                             Err(e) => {
                                 return HttpResponse::InternalServerError()
                                     .content_type(ContentType::html())
-                                    .body(render_error_html(&e));
+                                    .body(render_error_html(&e, LIVE_RELOAD_SCRIPT));
                             }
                         }
                     }
                     Err(e) => {
                         return HttpResponse::InternalServerError()
                             .content_type(ContentType::html())
-                            .body(render_error_html(&e));
+                            .body(render_error_html(&e, LIVE_RELOAD_SCRIPT));
                     }
                 }
             }
@@ -329,7 +342,7 @@ async fn page(path: web::Path<String>, state: web::Data<Arc<DevAppState>>) -> Ht
             // Error occurred while processing - show error in page
             HttpResponse::InternalServerError()
                 .content_type(ContentType::html())
-                .body(render_error_html(&e))
+                .body(render_error_html(&e, LIVE_RELOAD_SCRIPT))
         }
     }
 }

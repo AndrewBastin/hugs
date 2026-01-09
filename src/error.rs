@@ -926,7 +926,7 @@ impl<T> HugsResultExt<T> for std::result::Result<T, std::io::Error> {
 }
 
 /// Render a HugsError as HTML for in-browser display during development
-pub fn render_error_html(error: &HugsError) -> String {
+pub fn render_error_html(error: &HugsError, dev_script: &str) -> String {
     use std::fmt::Write;
 
     let mut html = String::new();
@@ -1012,9 +1012,11 @@ pub fn render_error_html(error: &HugsError) -> String {
         </div>
         <div class="error-content">{}</div>
     </div>
+    {}
 </body>
 </html>"#,
-        escaped
+        escaped,
+        dev_script
     )
     .unwrap();
 
