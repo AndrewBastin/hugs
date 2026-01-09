@@ -1,0 +1,16 @@
+#
+# Hey! This is your site configuration.
+#
+# I use these values when building your site - things like the title that
+# appears in browser tabs, meta tags for SEO, and so on.
+#
+# Feel free to update these to match your site!
+#
+# (っ◕‿◕)っ
+#
+
+[site]
+title = "My Hugs Site"
+description = "A site built with Hugs"
+url = "https://example.com"
+author = "Your Name"

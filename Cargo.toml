@@ -1,0 +1,43 @@
+[package]
+name = "hugs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix = "0.13.5"
+actix-web = "4.12.1"
+actix-web-actors = "4.3.1"
+atom_syndication = "0.12.7"
+chrono = { version = "0.4.42", features = ["serde"] }
+clap = { version = "4.5.54", features = ["derive"] }
+markdown = "1.0.0"
+markdown-frontmatter = { version = "0.4.0", features = ["yaml"] }
+miette = { version = "7.6.0", features = ["fancy", "syntect-highlighter"] }
+minify-html = "0.18"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+mime_guess = "2.0"
+notify = "8.2.0"
+rss = "2.0.12"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_yaml = "0.9.34"
+tera = "1.20.1"
+tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
+toml = "0.9.10"
+walkdir = "2.5.0"
+sha2 = "0.10"
+hex = "0.4"
+include_dir = "0.7"
+owo-colors = "4.2.3"
+serde_json = "1.0.149"
+giallo = { version = "0.2.1", features = ["dump"] }
+regex = "1.12.2"
+ansi-to-html = "0.2.2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+strip = true

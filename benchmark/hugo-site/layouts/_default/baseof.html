@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ .Title }} | {{ .Site.Title }}</title>
+    <meta name="description" content="{{ with .Description }}{{ . }}{{ else }}{{ .Site.Params.description }}{{ end }}">
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 1rem; }
+        header { border-bottom: 1px solid #ccc; margin-bottom: 1rem; }
+        nav a { margin-right: 1rem; }
+        footer { border-top: 1px solid #ccc; margin-top: 2rem; padding-top: 1rem; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>{{ .Site.Title }}</h1>
+        <nav>
+            <a href="/">Home</a>
+            <a href="/blog/">Blog</a>
+        </nav>
+    </header>
+    <main>
+        {{ block "main" . }}{{ end }}
+    </main>
+    <footer>
+        <p>Built with Hugo</p>
+    </footer>
+</body>
+</html>

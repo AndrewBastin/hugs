@@ -1,0 +1,7 @@
+baseURL = "https://benchmark.example.com/"
+languageCode = "en-us"
+title = "Benchmark Blog"
+
+[params]
+  author = "Benchmark Author"
+  description = "A benchmark blog for comparing static site generators"

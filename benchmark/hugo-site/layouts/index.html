@@ -1,0 +1,13 @@
+{{ define "main" }}
+<h1>Welcome to the Benchmark Blog</h1>
+{{ .Content }}
+<h2>Recent Posts</h2>
+<ul>
+{{ range first 10 (where .Site.RegularPages "Section" "blog") }}
+    <li>
+        <a href="{{ .Permalink }}">{{ .Title }}</a>
+        {{ with .Date }}<time datetime="{{ .Format "2006-01-02" }}">{{ .Format "January 2, 2006" }}</time>{{ end }}
+    </li>
+{{ end }}
+</ul>
+{{ end }}

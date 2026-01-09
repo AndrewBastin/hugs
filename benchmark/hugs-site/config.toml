@@ -1,0 +1,8 @@
+[site]
+title = "Benchmark Blog"
+description = "A benchmark blog for comparing static site generators"
+url = "https://benchmark.example.com"
+author = "Benchmark Author"
+
+[build.syntax_highlighting]
+enabled = false
