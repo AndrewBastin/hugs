@@ -162,6 +162,13 @@ pub enum HugsError {
     )]
     SiteNotFound { path: StyledPath },
 
+    #[error("I couldn't find a Hugs site in the current directory")]
+    #[diagnostic(
+        code(hugs::site::not_found_cwd),
+        help("Make sure you're in a Hugs site directory, or specify a path:\n\n    hugs dev <path>\n    hugs build <path>\n\nA Hugs site should contain:\n\n  <site>/\n    _/\n      header.md\n      footer.md\n      nav.md\n      theme.css\n    index.md\n    config.toml")
+    )]
+    SiteNotFoundCwd,
+
     #[error("I couldn't find the file at {path}")]
     #[diagnostic(
         code(hugs::file::not_found),
@@ -972,6 +979,7 @@ impl Clone for HugsError {
                 HugsError::TemplateContext { reason: reason.clone() }
             }
             HugsError::SiteNotFound { path } => HugsError::SiteNotFound { path: path.clone() },
+            HugsError::SiteNotFoundCwd => HugsError::SiteNotFoundCwd,
             HugsError::FileNotFound { path } => HugsError::FileNotFound { path: path.clone() },
             HugsError::FileRead { path, cause } => HugsError::FileRead {
                 path: path.clone(),

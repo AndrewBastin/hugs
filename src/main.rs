@@ -24,7 +24,8 @@ struct Args {
 enum Command {
     /// Run the development server with live reloading
     Dev {
-        /// Path to the site directory
+        /// Path to the site directory (defaults to current directory)
+        #[arg(default_value = ".")]
         path: PathBuf,
 
         /// Port to run on (if specified, fails when unavailable; otherwise retries)
@@ -33,7 +34,8 @@ enum Command {
     },
     /// Build the static site
     Build {
-        /// Path to the site directory
+        /// Path to the site directory (defaults to current directory)
+        #[arg(default_value = ".")]
         path: PathBuf,
 
         /// Output directory for the built site

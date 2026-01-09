@@ -340,8 +340,13 @@ async fn read_required_file(
 
 impl AppData {
     pub async fn load(site_path: PathBuf) -> Result<AppData> {
-        // Check if the site directory exists first
-        if !site_path.is_dir() {
+        // Check if this looks like a valid Hugs site
+        let underscore_dir = site_path.join("_");
+        if !site_path.is_dir() || !underscore_dir.is_dir() {
+            // Use a friendlier error message when running in the current directory
+            if site_path.as_os_str() == "." {
+                return Err(HugsError::SiteNotFoundCwd);
+            }
             return Err(HugsError::SiteNotFound {
                 path: (&site_path).into(),
             });
