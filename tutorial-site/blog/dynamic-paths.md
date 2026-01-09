@@ -88,6 +88,12 @@ This generates pages `/1`, `/2`, `/3`, `/4`, `/5` (or wherever the file lives).
 
 For more on what you can do with Jinja expressions, see the [Templating](/blog/templating) post.
 
+### Reserved File Names
+
+The `[404].md` filename is reserved for creating a custom 404 error page. Unlike other bracket files, it doesn't generate dynamic pages - instead, Hugs uses it to render a `404.html` file that hosts serve for missing pages.
+
+See [Deployment](/blog/deployment) for more on setting up custom 404 pages.
+
 ### Try It!
 
 1. Create a new file `docs.md` in your site root

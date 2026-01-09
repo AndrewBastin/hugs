@@ -57,7 +57,7 @@ During a production build, Hugs:
 3. **Generates sitemap.xml** - Helps search engines discover your pages
 4. **Generates feeds** - Creates RSS/Atom feeds if configured
 5. **Copies static assets** - Images, fonts, and other files
-6. **Creates 404.html** - Custom error page if you have a `404.md`
+6. **Creates 404.html** - Custom error page if you have a `[404].md`
 7. **Cache-busts assets** - Adds content hashes for browser caching
 
 ### Build Configuration
@@ -181,7 +181,7 @@ This skips the Rust compilation step, making deploys much faster.
 
 ### Custom 404 Pages
 
-Most static hosts serve `404.html` for missing pages. Create `404.md` in your site root:
+Most static hosts serve `404.html` for missing pages. Create `[404].md` in your site root:
 
 ```markdown
 ---
