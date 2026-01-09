@@ -18,6 +18,7 @@ use crate::error::{HugsError, HugsResultExt, Result, TemplateHints};
 /// Create markdown options (can't be static due to non-Send callback fields)
 fn markdown_options() -> markdown::Options {
     markdown::Options {
+        parse: markdown::ParseOptions::gfm(),
         compile: markdown::CompileOptions {
             allow_any_img_src: true,
             allow_dangerous_html: true,
