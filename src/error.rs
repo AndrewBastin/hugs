@@ -418,8 +418,15 @@ impl HugsError {
     }
 
     /// Create a template render error, attempting to extract line info from MiniJinja error
-    pub fn template_render(path: &Path, content: &str, error: minijinja::Error, hints: &TemplateHints) -> Self {
-        let span = extract_template_span(&error, content);
+    pub fn template_render(
+        path: &Path,
+        content: &str,
+        error: minijinja::Error,
+        hints: &TemplateHints,
+        macro_prefix_bytes: usize,
+        macro_prefix_lines: usize,
+    ) -> Self {
+        let span = extract_template_span(&error, content, macro_prefix_bytes, macro_prefix_lines);
         let reason = format_template_error_reason(&error);
         let help_text = template_error_help(&error, hints);
 
@@ -433,8 +440,15 @@ impl HugsError {
     }
 
     /// Create a template render error with a custom path name (for inline templates)
-    pub fn template_render_named(name: &str, content: &str, error: &minijinja::Error, hints: &TemplateHints) -> Self {
-        let span = extract_template_span(error, content);
+    pub fn template_render_named(
+        name: &str,
+        content: &str,
+        error: &minijinja::Error,
+        hints: &TemplateHints,
+        macro_prefix_bytes: usize,
+        macro_prefix_lines: usize,
+    ) -> Self {
+        let span = extract_template_span(error, content, macro_prefix_bytes, macro_prefix_lines);
         let reason = format_template_error_reason(error);
         let help_text = template_error_help(error, hints);
 
@@ -476,29 +490,51 @@ impl HugsError {
     }
 }
 
-/// Extract source span from MiniJinja error
+/// Extract source span from MiniJinja error, adjusting for macro prefix
 /// Uses byte range if available (debug feature), otherwise falls back to line number
-fn extract_template_span(error: &minijinja::Error, content: &str) -> SourceSpan {
+fn extract_template_span(
+    error: &minijinja::Error,
+    content: &str,
+    macro_prefix_bytes: usize,
+    macro_prefix_lines: usize,
+) -> SourceSpan {
     // Try byte range first (most precise) - requires debug feature
     if let Some(range) = error.range() {
+        // Adjust for macro prefix
+        let adjusted_start = range.start.saturating_sub(macro_prefix_bytes);
+        let adjusted_end = range.end.saturating_sub(macro_prefix_bytes);
+
+        // If error is in macro prefix, point to start of user content
+        if adjusted_start == 0 && range.start < macro_prefix_bytes {
+            return SourceSpan::from((0_usize, 1_usize));
+        }
+
         // Clamp range to content bounds
-        let start = range.start.min(content.len());
-        let end = range.end.min(content.len());
+        let start = adjusted_start.min(content.len());
+        let end = adjusted_end.min(content.len());
         let len = (end - start).max(1);
         return SourceSpan::new(start.into(), len.into());
     }
 
     // Fall back to line number
     if let Some(line_num) = error.line() {
+        // Adjust line number for macro prefix
+        let adjusted_line = line_num.saturating_sub(macro_prefix_lines);
+
+        // If error is in macro prefix, point to start of user content
+        if adjusted_line == 0 && line_num <= macro_prefix_lines {
+            return SourceSpan::from((0_usize, 1_usize));
+        }
+
         let offset: usize = content
             .lines()
-            .take(line_num.saturating_sub(1))
+            .take(adjusted_line.saturating_sub(1))
             .map(|l| l.len() + 1)
             .sum();
 
         let line_len = content
             .lines()
-            .nth(line_num.saturating_sub(1))
+            .nth(adjusted_line.saturating_sub(1))
             .map(|l| l.len().max(1))
             .unwrap_or(1);
 
@@ -525,6 +561,7 @@ pub struct TemplateHints {
     pub functions: Vec<String>,
     pub tests: Vec<String>,
     pub variables: Vec<String>,
+    pub macros: Vec<String>,
 }
 
 impl TemplateHints {
@@ -579,7 +616,13 @@ impl TemplateHints {
             "syntax_highlighting_enabled",
         ].into_iter().map(String::from).collect();
 
-        Self { filters, functions, tests, variables }
+        Self { filters, functions, tests, variables, macros: Vec::new() }
+    }
+
+    /// Set the available macro names (for error suggestions)
+    pub fn with_macros(mut self, macros: Vec<String>) -> Self {
+        self.macros = macros;
+        self
     }
 }
 
@@ -737,15 +780,34 @@ fn template_error_help(error: &minijinja::Error, hints: &TemplateHints) -> Strin
         }
         ErrorKind::UnknownFunction => {
             let mut help = String::from(
-                "I don't recognize this function.\n\n"
+                "I don't recognize this function or macro.\n\n"
             );
 
             if let Some(name) = identifier {
-                if let Some(suggestion) = find_best_match(name, &hints.functions) {
-                    help.push_str(&format!(
-                        "Hint: Did you mean `{}`?\n\n",
-                        suggestion
-                    ));
+                // Check both functions and macros for suggestions
+                let func_suggestion = find_best_match(name, &hints.functions);
+                let macro_suggestion = find_best_match(name, &hints.macros);
+
+                match (func_suggestion, macro_suggestion) {
+                    (Some(f), Some(m)) => {
+                        help.push_str(&format!(
+                            "Hint: Did you mean the function `{}` or the macro `{}`?\n\n",
+                            f, m
+                        ));
+                    }
+                    (Some(f), None) => {
+                        help.push_str(&format!(
+                            "Hint: Did you mean `{}`?\n\n",
+                            f
+                        ));
+                    }
+                    (None, Some(m)) => {
+                        help.push_str(&format!(
+                            "Hint: Did you mean the macro `{}`?\n\n",
+                            m
+                        ));
+                    }
+                    (None, None) => {}
                 }
             }
 
@@ -764,6 +826,16 @@ fn template_error_help(error: &minijinja::Error, hints: &TemplateHints) -> Strin
                  - range(end=5) - generate a sequence of numbers",
                 func_list
             ));
+
+            // Show available macros if any exist
+            if !hints.macros.is_empty() {
+                help.push_str(&format!(
+                    "\n\nAvailable macros: {}\n\
+                     Use macros with: {{% call macro_name() %}}...{{% endcall %}}",
+                    hints.macros.join(", ")
+                ));
+            }
+
             help
         }
         ErrorKind::UnknownTest => {

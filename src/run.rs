@@ -200,6 +200,10 @@ pub const ROOT_TEMPL: &'static str = include_str!("templates/root.jinja");
 pub struct TemplateError {
     pub error: minijinja::Error,
     pub hints: TemplateHints,
+    /// Number of bytes in the macro prefix (for adjusting byte ranges)
+    pub macro_prefix_bytes: usize,
+    /// Number of lines in the macro prefix (for adjusting line numbers)
+    pub macro_prefix_lines: usize,
 }
 
 /// Create a configured template environment with custom functions
@@ -216,6 +220,28 @@ fn create_template_env(
     (env, hints)
 }
 
+/// Extract macro names from a macros template string
+/// Looks for patterns like `{% macro NAME(...) %}`
+fn extract_macro_names(macros_template: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    // Simple regex-free parsing: look for "{% macro " followed by identifier
+    for line in macros_template.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("{%") {
+            let rest = rest.trim();
+            if let Some(rest) = rest.strip_prefix("macro") {
+                let rest = rest.trim();
+                // Extract the macro name (identifier before '(')
+                let name_end = rest.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(rest.len());
+                if name_end > 0 {
+                    names.push(rest[..name_end].to_string());
+                }
+            }
+        }
+    }
+    names
+}
+
 pub fn render_template<T: serde::Serialize>(
     template: &str,
     ctx: T,
@@ -225,6 +251,18 @@ pub fn render_template<T: serde::Serialize>(
 ) -> std::result::Result<String, TemplateError> {
     let (mut env, hints) = create_template_env(pages, cache_bust);
 
+    // Extract macro names and add them to hints for error suggestions
+    let macro_names = extract_macro_names(macros_template);
+    let hints = hints.with_macros(macro_names);
+
+    // Calculate macro prefix metrics for error position adjustment
+    let (macro_prefix_bytes, macro_prefix_lines) = if !macros_template.is_empty() {
+        // +1 for the joining newline
+        (macros_template.len() + 1, macros_template.lines().count() + 1)
+    } else {
+        (0, 0)
+    };
+
     // Prepend macro definitions directly to template so they're globally available
     let full_template = if !macros_template.is_empty() {
         format!("{}\n{}", macros_template, template)
@@ -232,9 +270,10 @@ pub fn render_template<T: serde::Serialize>(
         template.to_string()
     };
 
-    env.add_template("template", &full_template).map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
-    let tmpl = env.get_template("template").map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
-    tmpl.render(ctx).map_err(|e| TemplateError { error: e, hints })
+    let make_err = |e| TemplateError { error: e, hints: hints.clone(), macro_prefix_bytes, macro_prefix_lines };
+    env.add_template("template", &full_template).map_err(make_err)?;
+    let tmpl = env.get_template("template").map_err(make_err)?;
+    tmpl.render(ctx).map_err(|e| TemplateError { error: e, hints, macro_prefix_bytes, macro_prefix_lines })
 }
 
 /// Render using the root template
@@ -245,6 +284,18 @@ pub fn render_root_template<T: serde::Serialize>(
 ) -> std::result::Result<String, TemplateError> {
     let (mut env, hints) = create_template_env(&app_data.pages, Some(cache_bust));
 
+    // Extract macro names and add them to hints for error suggestions
+    let macro_names = extract_macro_names(&app_data.macros_template);
+    let hints = hints.with_macros(macro_names);
+
+    // Calculate macro prefix metrics for error position adjustment
+    let (macro_prefix_bytes, macro_prefix_lines) = if !app_data.macros_template.is_empty() {
+        // +1 for the joining newline
+        (app_data.macros_template.len() + 1, app_data.macros_template.lines().count() + 1)
+    } else {
+        (0, 0)
+    };
+
     // Prepend macro definitions to root template so they're globally available
     let full_root_template = if !app_data.macros_template.is_empty() {
         format!("{}\n{}", app_data.macros_template, ROOT_TEMPL)
@@ -252,9 +303,10 @@ pub fn render_root_template<T: serde::Serialize>(
         ROOT_TEMPL.to_string()
     };
 
-    env.add_template("root", &full_root_template).map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
-    let tmpl = env.get_template("root").map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
-    tmpl.render(ctx).map_err(|e| TemplateError { error: e, hints })
+    let make_err = |e| TemplateError { error: e, hints: hints.clone(), macro_prefix_bytes, macro_prefix_lines };
+    env.add_template("root", &full_root_template).map_err(make_err)?;
+    let tmpl = env.get_template("root").map_err(make_err)?;
+    tmpl.render(ctx).map_err(|e| TemplateError { error: e, hints, macro_prefix_bytes, macro_prefix_lines })
 }
 
 fn parse_md(
@@ -265,7 +317,14 @@ fn parse_md(
     macros_template: &str,
 ) -> Result<String> {
     let content_md = render_template(content_jinja_md, page_content, pages, None, macros_template)
-        .map_err(|e| HugsError::template_render_named(source_name, content_jinja_md, &e.error, &e.hints))?;
+        .map_err(|e| HugsError::template_render_named(
+            source_name,
+            content_jinja_md,
+            &e.error,
+            &e.hints,
+            e.macro_prefix_bytes,
+            e.macro_prefix_lines,
+        ))?;
 
     markdown::to_html_with_options(&content_md, &markdown_options()).map_err(|e| HugsError::MarkdownParse {
         file: source_name.into(),
@@ -1140,7 +1199,14 @@ pub async fn resolve_path_to_doc(
     };
 
     let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None, &app_data.macros_template)
-        .map_err(|e| HugsError::template_render(&resolvable_path, &doc_content_jinja, e.error, &e.hints))?;
+        .map_err(|e| HugsError::template_render(
+            &resolvable_path,
+            &doc_content_jinja,
+            e.error,
+            &e.hints,
+            e.macro_prefix_bytes,
+            e.macro_prefix_lines,
+        ))?;
 
     let (frontmatter, body) =
         markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content).map_err(|e| {
@@ -1216,7 +1282,14 @@ pub async fn resolve_dynamic_doc(
     }
 
     let doc_content = render_template(&doc_content_jinja, context, &app_data.pages, None, &app_data.macros_template)
-        .map_err(|e| HugsError::template_render(&resolvable_path, &doc_content_jinja, e.error, &e.hints))?;
+        .map_err(|e| HugsError::template_render(
+            &resolvable_path,
+            &doc_content_jinja,
+            e.error,
+            &e.hints,
+            e.macro_prefix_bytes,
+            e.macro_prefix_lines,
+        ))?;
 
     let (frontmatter, body) =
         markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content).map_err(|e| {
@@ -1449,5 +1522,12 @@ fn render_page_html_internal(
 
     let cache_bust = app_data.cache_bust_function();
     render_root_template(app_data, &content, &cache_bust)
-        .map_err(|e| HugsError::template_render_named("root.jinja", ROOT_TEMPL, &e.error, &e.hints))
+        .map_err(|e| HugsError::template_render_named(
+            "root.jinja",
+            ROOT_TEMPL,
+            &e.error,
+            &e.hints,
+            e.macro_prefix_bytes,
+            e.macro_prefix_lines,
+        ))
 }
