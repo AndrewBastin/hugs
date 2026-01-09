@@ -183,4 +183,4 @@ This automatically lists all blog posts, sorted by their `order` frontmatter fie
 
 ---
 
-Next up: [Syntax Highlighting](/blog/syntax-highlighting) - make your code blocks look great.
+Next up: [Macros](/blog/macros) - build reusable components for your pages.

@@ -323,6 +323,27 @@ pub enum HugsError {
         reason: String,
     },
 
+    // === Macro Errors ===
+    #[error("I couldn't parse the macro in {file}")]
+    #[diagnostic(
+        code(hugs::macros::parse),
+        help("Make sure your macro file has valid frontmatter with parameter definitions.\n\nExample:\n---\ntitle: \"\"\nvariant: \"default\"\n---\n<div>Macro content here</div>")
+    )]
+    MacroParse {
+        file: StyledPath,
+        reason: String,
+    },
+
+    #[error("The macro filename '{name}' in {path} is not a valid identifier")]
+    #[diagnostic(
+        code(hugs::macros::invalid_name),
+        help("Macro names must start with a letter or underscore and contain only letters, numbers, and underscores.\n\nExamples of valid names: card, my_button, Button2")
+    )]
+    MacroInvalidName {
+        path: StyledPath,
+        name: StyledName,
+    },
+
     // === Build Errors ===
     #[error("I couldn't resolve the page at URL {url}")]
     #[diagnostic(
@@ -1020,6 +1041,14 @@ impl Clone for HugsError {
                 param_name: param_name.clone(),
                 expression: expression.clone(),
                 reason: reason.clone(),
+            },
+            HugsError::MacroParse { file, reason } => HugsError::MacroParse {
+                file: file.clone(),
+                reason: reason.clone(),
+            },
+            HugsError::MacroInvalidName { path, name } => HugsError::MacroInvalidName {
+                path: path.clone(),
+                name: name.clone(),
             },
             HugsError::PageResolve { url, file_path } => HugsError::PageResolve {
                 url: url.clone(),

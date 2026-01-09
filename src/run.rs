@@ -221,9 +221,18 @@ pub fn render_template<T: serde::Serialize>(
     ctx: T,
     pages: &Arc<Vec<PageInfo>>,
     cache_bust: Option<&CacheBustFunction>,
+    macros_template: &str,
 ) -> std::result::Result<String, TemplateError> {
     let (mut env, hints) = create_template_env(pages, cache_bust);
-    env.add_template("template", template).map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
+
+    // Prepend macro definitions directly to template so they're globally available
+    let full_template = if !macros_template.is_empty() {
+        format!("{}\n{}", macros_template, template)
+    } else {
+        template.to_string()
+    };
+
+    env.add_template("template", &full_template).map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
     let tmpl = env.get_template("template").map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
     tmpl.render(ctx).map_err(|e| TemplateError { error: e, hints })
 }
@@ -235,7 +244,15 @@ pub fn render_root_template<T: serde::Serialize>(
     cache_bust: &CacheBustFunction,
 ) -> std::result::Result<String, TemplateError> {
     let (mut env, hints) = create_template_env(&app_data.pages, Some(cache_bust));
-    env.add_template("root", ROOT_TEMPL).map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
+
+    // Prepend macro definitions to root template so they're globally available
+    let full_root_template = if !app_data.macros_template.is_empty() {
+        format!("{}\n{}", app_data.macros_template, ROOT_TEMPL)
+    } else {
+        ROOT_TEMPL.to_string()
+    };
+
+    env.add_template("root", &full_root_template).map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
     let tmpl = env.get_template("root").map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
     tmpl.render(ctx).map_err(|e| TemplateError { error: e, hints })
 }
@@ -245,8 +262,9 @@ fn parse_md(
     page_content: &PageContent<'_>,
     pages: &Arc<Vec<PageInfo>>,
     source_name: &str,
+    macros_template: &str,
 ) -> Result<String> {
-    let content_md = render_template(content_jinja_md, page_content, pages, None)
+    let content_md = render_template(content_jinja_md, page_content, pages, None, macros_template)
         .map_err(|e| HugsError::template_render_named(source_name, content_jinja_md, &e.error, &e.hints))?;
 
     markdown::to_html_with_options(&content_md, &markdown_options()).map_err(|e| HugsError::MarkdownParse {
@@ -279,6 +297,9 @@ pub struct AppData {
 
     /// Pre-generated CSS for syntax highlighting
     pub highlight_css: String,
+
+    /// Pre-built template containing all macro definitions from _/macros/
+    pub macros_template: String,
 }
 
 impl AppData {
@@ -345,6 +366,10 @@ impl AppData {
             String::new()
         };
 
+        // Load macros from _/macros/ directory
+        let macros = load_macros(&site_path).await?;
+        let macros_template = build_macros_template(&macros);
+
         // Scan pages and separate static from dynamic
         let scan_result = scan_pages(&site_path).await?;
 
@@ -371,9 +396,9 @@ impl AppData {
             syntax_highlighting_enabled: false,
         };
 
-        let header_html = parse_md(&header_md, &initial_page_content, &pages, "_/header.md")?;
-        let footer_html = parse_md(&footer_md, &initial_page_content, &pages, "_/footer.md")?;
-        let nav_html = parse_md(&nav_md, &initial_page_content, &pages, "_/nav.md")?;
+        let header_html = parse_md(&header_md, &initial_page_content, &pages, "_/header.md", &macros_template)?;
+        let footer_html = parse_md(&footer_md, &initial_page_content, &pages, "_/footer.md", &macros_template)?;
+        let nav_html = parse_md(&nav_md, &initial_page_content, &pages, "_/nav.md", &macros_template)?;
 
         let notfound_path = site_path.join("[404].md");
         let notfound_page = if notfound_path.exists() {
@@ -394,6 +419,7 @@ impl AppData {
             config,
             cache_bust_registry: CacheBustRegistry::new(),
             highlight_css,
+            macros_template,
         })
     }
 }
@@ -495,6 +521,27 @@ pub struct DynamicPageDef {
     pub param_values: Vec<YamlValue>,
     /// The raw frontmatter for this dynamic page
     pub frontmatter: YamlValue,
+}
+
+/// A parsed macro definition from _/macros/*.md
+#[derive(Clone, Debug)]
+pub struct MacroDefinition {
+    /// The macro name (derived from filename, e.g., "card" from "card.md")
+    pub name: String,
+    /// Parameter definitions with default values (from frontmatter)
+    pub params: Vec<MacroParam>,
+    /// The raw body content (markdown/HTML/Jinja template)
+    pub body: String,
+    /// Source file path for error reporting
+    pub source_path: PathBuf,
+}
+
+/// A single macro parameter with its default value
+#[derive(Clone, Debug)]
+pub struct MacroParam {
+    pub name: String,
+    /// Minijinja-compatible default value literal (e.g., "", "default", none, 123)
+    pub default_value: String,
 }
 
 /// Result of scanning pages - separates static pages from dynamic definitions
@@ -748,6 +795,149 @@ fn expand_dynamic_pages(dynamic_defs: &[DynamicPageDef]) -> Vec<PageInfo> {
     expanded
 }
 
+/// Check if a string is a valid identifier for macro names
+fn is_valid_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Convert a YAML value to a minijinja-compatible literal string
+fn yaml_to_jinja_literal(value: &YamlValue) -> String {
+    match value {
+        YamlValue::Null => "none".to_string(),
+        YamlValue::Bool(b) => if *b { "true" } else { "false" }.to_string(),
+        YamlValue::Number(n) => n.to_string(),
+        YamlValue::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+        YamlValue::Sequence(seq) => {
+            let items: Vec<String> = seq.iter().map(yaml_to_jinja_literal).collect();
+            format!("[{}]", items.join(", "))
+        }
+        YamlValue::Mapping(map) => {
+            let pairs: Vec<String> = map
+                .iter()
+                .filter_map(|(k, v)| {
+                    let key = match k {
+                        YamlValue::String(s) => s.clone(),
+                        _ => return None,
+                    };
+                    Some(format!("\"{}\": {}", key, yaml_to_jinja_literal(v)))
+                })
+                .collect();
+            format!("{{{}}}", pairs.join(", "))
+        }
+        YamlValue::Tagged(t) => yaml_to_jinja_literal(&t.value),
+    }
+}
+
+/// Parse a macro file into a MacroDefinition
+fn parse_macro_file(path: &Path, content: &str) -> Result<MacroDefinition> {
+    // Extract macro name from filename (card.md -> "card")
+    let name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| HugsError::MacroParse {
+            file: path.into(),
+            reason: "Could not extract filename".into(),
+        })?
+        .to_string();
+
+    // Validate macro name is a valid identifier
+    if !is_valid_identifier(&name) {
+        return Err(HugsError::MacroInvalidName {
+            path: path.into(),
+            name: name.into(),
+        });
+    }
+
+    // Parse frontmatter as YAML mapping
+    let (frontmatter, body) = markdown_frontmatter::parse::<YamlValue>(content)
+        .map_err(|e| HugsError::MacroParse {
+            file: path.into(),
+            reason: e.to_string(),
+        })?;
+
+    // Convert frontmatter to parameters
+    let params = match &frontmatter {
+        YamlValue::Mapping(m) => {
+            m.iter()
+                .filter_map(|(k, v)| {
+                    let name = match k {
+                        YamlValue::String(s) => s.clone(),
+                        _ => return None,
+                    };
+                    let default_value = yaml_to_jinja_literal(v);
+                    Some(MacroParam { name, default_value })
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+
+    Ok(MacroDefinition {
+        name,
+        params,
+        body: body.to_string(),
+        source_path: path.to_path_buf(),
+    })
+}
+
+/// Load all macro definitions from _/macros/*.md
+async fn load_macros(site_path: &PathBuf) -> Result<Vec<MacroDefinition>> {
+    let macros_dir = site_path.join("_/macros");
+    if !macros_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut macros = Vec::new();
+
+    for entry in WalkDir::new(&macros_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+    {
+        let path = entry.path();
+        let content = tokio::fs::read_to_string(path).await.map_err(|e| {
+            HugsError::MacroParse {
+                file: path.into(),
+                reason: format!("Could not read file: {}", e),
+            }
+        })?;
+        let macro_def = parse_macro_file(path, &content)?;
+        macros.push(macro_def);
+    }
+
+    Ok(macros)
+}
+
+/// Build a combined template string containing all macro definitions
+fn build_macros_template(macros: &[MacroDefinition]) -> String {
+    let mut template = String::new();
+
+    for macro_def in macros {
+        // Build parameter list with defaults
+        let params_str: String = macro_def
+            .params
+            .iter()
+            .map(|p| format!("{}={}", p.name, p.default_value))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        template.push_str(&format!(
+            "{{% macro {}({}) %}}\n{}\n{{% endmacro %}}\n\n",
+            macro_def.name,
+            params_str,
+            macro_def.body.trim()
+        ));
+    }
+
+    template
+}
+
 pub fn convert_file_path_to_url(path: &Path) -> String {
     let path_str = path.with_extension("").to_string_lossy().to_string();
 
@@ -944,7 +1134,7 @@ pub async fn resolve_path_to_doc(
         syntax_highlighting_enabled: false,
     };
 
-    let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None)
+    let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None, &app_data.macros_template)
         .map_err(|e| HugsError::template_render(&resolvable_path, &doc_content_jinja, e.error, &e.hints))?;
 
     let (frontmatter, body) =
@@ -1020,7 +1210,7 @@ pub async fn resolve_dynamic_doc(
         map.insert(param_name, param_value);
     }
 
-    let doc_content = render_template(&doc_content_jinja, context, &app_data.pages, None)
+    let doc_content = render_template(&doc_content_jinja, context, &app_data.pages, None, &app_data.macros_template)
         .map_err(|e| HugsError::template_render(&resolvable_path, &doc_content_jinja, e.error, &e.hints))?;
 
     let (frontmatter, body) =
@@ -1063,7 +1253,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
         syntax_highlighting_enabled: false,
     };
 
-    let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None).ok()?;
+    let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None, &app_data.macros_template).ok()?;
 
     let (frontmatter, body) = markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content).ok()?;
 
