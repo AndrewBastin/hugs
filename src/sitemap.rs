@@ -1,12 +1,12 @@
+use minijinja::{Environment, context};
 use serde::Serialize;
-use tera::{Context, Tera};
 
 use crate::config::SiteMetadata;
 use crate::error::{HugsError, Result};
 use crate::feed::extract_date_from_frontmatter;
 use crate::run::PageInfo;
 
-const SITEMAP_TEMPLATE: &str = include_str!("templates/sitemap.tera");
+const SITEMAP_TEMPLATE: &str = include_str!("templates/sitemap.jinja");
 
 #[derive(Serialize)]
 struct SitemapEntry {
@@ -41,16 +41,18 @@ pub fn generate_sitemap(pages: &[PageInfo], site_metadata: &SiteMetadata) -> Res
         })
         .collect();
 
-    let mut tera = Tera::default();
-    tera.add_raw_template("sitemap", SITEMAP_TEMPLATE)
+    let mut env = Environment::new();
+    env.add_template("sitemap", SITEMAP_TEMPLATE)
         .map_err(|e| HugsError::SitemapTemplate {
             reason: e.to_string(),
         })?;
 
-    let mut context = Context::new();
-    context.insert("entries", &entries);
+    let tmpl = env.get_template("sitemap")
+        .map_err(|e| HugsError::SitemapTemplate {
+            reason: e.to_string(),
+        })?;
 
-    tera.render("sitemap", &context)
+    tmpl.render(context! { entries => entries })
         .map_err(|e| HugsError::SitemapTemplate {
             reason: e.to_string(),
         })

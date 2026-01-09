@@ -22,7 +22,6 @@ notify = "8.2.0"
 rss = "2.0.12"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_yaml = "0.9.34"
-tera = "1.20.1"
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "fs", "sync", "time"] }
 toml = "0.9.10"
 walkdir = "2.5.0"
@@ -34,6 +33,7 @@ serde_json = "1.0.149"
 giallo = { version = "0.2.1", features = ["dump"] }
 regex = "1.12.2"
 ansi-to-html = "0.2.2"
+minijinja = { version = "2.14.0", features = ["debug"] }
 
 [profile.release]
 lto = true

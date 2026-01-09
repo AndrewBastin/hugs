@@ -71,9 +71,9 @@ The parameter name inside the brackets (e.g., `tag`) **must match** a frontmatte
 
 **Note:** Dynamic brackets only work on markdown files, not folders. You can have `blog/[tag].md`, but not `[category]/post.md`.
 
-### Dynamic Values with Tera
+### Dynamic Values with Jinja
 
-You can also use Tera expressions to generate values:
+You can also use Jinja expressions to generate values:
 
 {% raw %}
 ```markdown
@@ -86,7 +86,7 @@ page_no: "range(end=5)"
 
 This generates pages `/1`, `/2`, `/3`, `/4`, `/5` (or wherever the file lives).
 
-For more on what you can do with Tera expressions, see the [Templating](/blog/templating) post.
+For more on what you can do with Jinja expressions, see the [Templating](/blog/templating) post.
 
 ### Try It!
 

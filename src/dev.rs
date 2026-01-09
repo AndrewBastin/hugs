@@ -250,12 +250,15 @@ fn match_dynamic_page(url_path: &str, app_data: &AppData) -> Option<(String, Dyn
 async fn page(path: web::Path<String>, state: web::Data<Arc<DevAppState>>) -> HttpResponse {
     let app_data = state.app_data.read().await;
 
-    if let Some(response) = try_serve_static_file(&path, &app_data).await {
+    // Normalize path by trimming trailing slashes
+    let path_str = path.trim_end_matches('/');
+
+    if let Some(response) = try_serve_static_file(path_str, &app_data).await {
         return response;
     }
 
     // First try to resolve as a static page
-    match resolve_path_to_doc(&path, &app_data).await {
+    match resolve_path_to_doc(path_str, &app_data).await {
         Ok(Some((frontmatter, doc_html, resolvable_path))) => {
             match render_page_html(
                 &frontmatter,
@@ -277,11 +280,11 @@ async fn page(path: web::Path<String>, state: web::Data<Arc<DevAppState>>) -> Ht
         }
         Ok(None) => {
             // Static page not found - try to match against dynamic pages
-            if let Some((source_path, dynamic_ctx)) = match_dynamic_page(&path, &app_data) {
+            if let Some((source_path, dynamic_ctx)) = match_dynamic_page(path_str, &app_data) {
                 match resolve_dynamic_doc(&source_path, &dynamic_ctx, &app_data).await {
                     Ok((frontmatter, doc_html, _resolvable_path)) => {
                         // Build the page URL from the request path
-                        let page_url = format!("/{}", path.as_str());
+                        let page_url = format!("/{}", path_str);
                         match render_dynamic_page_html(
                             &frontmatter,
                             &doc_html,

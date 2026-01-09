@@ -7,13 +7,13 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use serde_yaml::Value as YamlValue;
 use sha2::{Sha256, Digest};
-use tera::{Context, Function, Tera, Value, to_value};
+use minijinja::{Environment, Value};
 use tokio::task::JoinSet;
 use tracing::warn;
 use walkdir::WalkDir;
 
 use crate::config::SiteConfig;
-use crate::error::{HugsError, HugsResultExt, Result};
+use crate::error::{HugsError, HugsResultExt, Result, TemplateHints};
 
 /// Create markdown options (can't be static due to non-Send callback fields)
 fn markdown_options() -> markdown::Options {
@@ -43,44 +43,32 @@ fn markdown_to_html(
     }
 }
 
-struct PagesFunction {
+/// Create a `pages` function for minijinja that returns all pages, optionally filtered by URL prefix
+fn create_pages_function(
     pages: Arc<Vec<PageInfo>>,
-}
-
-impl Function for PagesFunction {
-    fn call(&self, args: &HashMap<String, Value>) -> tera::Result<Value> {
-        let pages_value = to_value(&*self.pages).unwrap();
-
+) -> impl Fn(minijinja::value::Kwargs) -> std::result::Result<Value, minijinja::Error> + Send + Sync + 'static {
+    move |kwargs: minijinja::value::Kwargs| {
         // If `within` arg is provided, filter by URL prefix
-        if let Some(within) = args.get("within") {
-            let prefix = within.as_str().ok_or_else(|| {
-                tera::Error::msg("Function `pages` argument `within` must be a string")
-            })?;
-
-            let arr = pages_value.as_array().unwrap();
+        let within: Option<String> = kwargs.get("within")?;
+        if let Some(prefix) = within {
             // The index URL for the directory is the prefix with a trailing slash
             let index_url = if prefix.ends_with('/') {
-                prefix.to_string()
+                prefix.clone()
             } else {
                 format!("{}/", prefix)
             };
-            let filtered: Vec<Value> = arr
+            let filtered: Vec<&PageInfo> = pages
                 .iter()
-                .filter(|item| {
-                    if let Some(url) = item.get("url").and_then(|u| u.as_str()) {
-                        // Include pages within the prefix, but exclude the directory index
-                        url.starts_with(prefix) && url != index_url
-                    } else {
-                        false
-                    }
+                .filter(|page| {
+                    // Include pages within the prefix, but exclude the directory index
+                    page.url.starts_with(&prefix) && page.url != index_url
                 })
-                .cloned()
                 .collect();
 
-            return Ok(to_value(filtered).unwrap());
+            Ok(Value::from_serialize(&filtered))
+        } else {
+            Ok(Value::from_serialize(&*pages))
         }
-
-        Ok(pages_value)
     }
 }
 
@@ -110,8 +98,8 @@ impl CacheBustRegistry {
     }
 }
 
-/// Tera function for opt-in cache busting via content hashing.
-/// Usage: {{ cache_bust(path="/theme.css") }} -> "/theme.a1b2c3f4.css"
+/// Data for cache busting function - used to create the minijinja function
+/// Usage in templates: {{ cache_bust(path="/theme.css") }} -> "/theme.a1b2c3f4.css"
 #[derive(Clone)]
 pub struct CacheBustFunction {
     site_path: PathBuf,
@@ -134,48 +122,58 @@ impl CacheBustFunction {
             registry,
         }
     }
-}
 
-impl Function for CacheBustFunction {
-    fn call(&self, args: &HashMap<String, Value>) -> tera::Result<Value> {
-        let path = args
-            .get("path")
-            .ok_or_else(|| tera::Error::msg("Function `cache_bust` requires `path` argument"))?
-            .as_str()
-            .ok_or_else(|| tera::Error::msg("Function `cache_bust` argument `path` must be a string"))?;
+    /// Create a minijinja-compatible function from this cache bust configuration
+    pub fn to_minijinja_fn(&self) -> impl Fn(minijinja::value::Kwargs) -> std::result::Result<String, minijinja::Error> + Send + Sync + 'static {
+        let site_path = self.site_path.clone();
+        let theme_css = self.theme_css.clone();
+        let highlight_css = self.highlight_css.clone();
+        let registry = self.registry.clone();
 
-        // Check if already computed
-        {
-            let entries = self.registry.entries.lock().unwrap();
-            if let Some(hashed) = entries.get(path) {
-                return Ok(Value::String(hashed.clone()));
+        move |kwargs: minijinja::value::Kwargs| {
+            let path: Option<String> = kwargs.get("path")?;
+            let path = path.ok_or_else(|| {
+                minijinja::Error::new(
+                    minijinja::ErrorKind::MissingArgument,
+                    "cache_bust requires 'path' argument",
+                )
+            })?;
+            // Check if already computed
+            {
+                let entries = registry.entries.lock().unwrap();
+                if let Some(hashed) = entries.get(&path) {
+                    return Ok(hashed.clone());
+                }
             }
-        }
 
-        // Get content (special case for theme.css and highlight.css which are pre-loaded)
-        let content = if path == "/theme.css" {
-            self.theme_css.as_bytes().to_vec()
-        } else if path == "/highlight.css" {
-            self.highlight_css.as_bytes().to_vec()
-        } else {
-            let file_path = if path.starts_with('/') {
-                self.site_path.join(&path[1..])
+            // Get content (special case for theme.css and highlight.css which are pre-loaded)
+            let content = if path == "/theme.css" {
+                theme_css.as_bytes().to_vec()
+            } else if path == "/highlight.css" {
+                highlight_css.as_bytes().to_vec()
             } else {
-                self.site_path.join(path)
+                let file_path = if path.starts_with('/') {
+                    site_path.join(&path[1..])
+                } else {
+                    site_path.join(&path)
+                };
+                std::fs::read(&file_path).map_err(|e| {
+                    minijinja::Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        format!("cache_bust: cannot read file '{}': {}", path, e),
+                    )
+                })?
             };
-            std::fs::read(&file_path).map_err(|e| {
-                tera::Error::msg(format!("cache_bust: cannot read file '{}': {}", path, e))
-            })?
-        };
 
-        // Compute hash (first 8 hex chars of SHA-256)
-        let hash = compute_content_hash(&content);
-        let hashed_path = insert_hash_into_path(path, &hash);
+            // Compute hash (first 8 hex chars of SHA-256)
+            let hash = compute_content_hash(&content);
+            let hashed_path = insert_hash_into_path(&path, &hash);
 
-        // Register for build phase
-        self.registry.insert(path, &hashed_path);
+            // Register for build phase
+            registry.insert(&path, &hashed_path);
 
-        Ok(Value::String(hashed_path))
+            Ok(hashed_path)
+        }
     }
 }
 
@@ -196,48 +194,60 @@ fn insert_hash_into_path(path: &str, hash: &str) -> String {
     }
 }
 
-pub const ROOT_TEMPL: &'static str = include_str!("templates/root.tera");
+pub const ROOT_TEMPL: &'static str = include_str!("templates/root.jinja");
 
-pub fn render_template(
-    template: &str,
-    context: &Context,
-    pages: &Arc<Vec<PageInfo>>,
-    cache_bust: Option<&CacheBustFunction>,
-) -> std::result::Result<String, tera::Error> {
-    let mut tera = Tera::default();
-    tera.register_function("pages", PagesFunction { pages: Arc::clone(pages) });
-    if let Some(cb) = cache_bust {
-        tera.register_function("cache_bust", cb.clone());
-    }
-    tera.add_raw_template("template", template)?;
-    tera.render("template", context)
+/// Error type that includes both the MiniJinja error and template hints for suggestions
+pub struct TemplateError {
+    pub error: minijinja::Error,
+    pub hints: TemplateHints,
 }
 
-/// Render using the pre-compiled root template (avoids re-parsing ROOT_TEMPL)
-pub fn render_root_template(
+/// Create a configured template environment with custom functions
+fn create_template_env(
+    pages: &Arc<Vec<PageInfo>>,
+    cache_bust: Option<&CacheBustFunction>,
+) -> (Environment<'static>, TemplateHints) {
+    let mut env = Environment::new();
+    env.add_function("pages", create_pages_function(Arc::clone(pages)));
+    if let Some(cb) = cache_bust {
+        env.add_function("cache_bust", cb.to_minijinja_fn());
+    }
+    let hints = TemplateHints::from_environment(&env);
+    (env, hints)
+}
+
+pub fn render_template<T: serde::Serialize>(
+    template: &str,
+    ctx: T,
+    pages: &Arc<Vec<PageInfo>>,
+    cache_bust: Option<&CacheBustFunction>,
+) -> std::result::Result<String, TemplateError> {
+    let (mut env, hints) = create_template_env(pages, cache_bust);
+    env.add_template("template", template).map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
+    let tmpl = env.get_template("template").map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
+    tmpl.render(ctx).map_err(|e| TemplateError { error: e, hints })
+}
+
+/// Render using the root template
+pub fn render_root_template<T: serde::Serialize>(
     app_data: &AppData,
-    context: &Context,
+    ctx: T,
     cache_bust: &CacheBustFunction,
-) -> std::result::Result<String, tera::Error> {
-    // Clone the pre-compiled Tera instance (cheap - internal data is Arc-wrapped)
-    let mut tera = app_data.root_tera.clone();
-    tera.register_function("pages", PagesFunction { pages: Arc::clone(&app_data.pages) });
-    tera.register_function("cache_bust", cache_bust.clone());
-    tera.render("root", context)
+) -> std::result::Result<String, TemplateError> {
+    let (mut env, hints) = create_template_env(&app_data.pages, Some(cache_bust));
+    env.add_template("root", ROOT_TEMPL).map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
+    let tmpl = env.get_template("root").map_err(|e| TemplateError { error: e, hints: hints.clone() })?;
+    tmpl.render(ctx).map_err(|e| TemplateError { error: e, hints })
 }
 
 fn parse_md(
-    content_tera_md: &str,
+    content_jinja_md: &str,
     page_content: &PageContent<'_>,
     pages: &Arc<Vec<PageInfo>>,
     source_name: &str,
 ) -> Result<String> {
-    let context = Context::from_serialize(page_content).map_err(|e| HugsError::TemplateContext {
-        reason: e.to_string(),
-    })?;
-
-    let content_md = render_template(content_tera_md, &context, pages, None)
-        .map_err(|e| HugsError::template_render_named(source_name, content_tera_md, &e))?;
+    let content_md = render_template(content_jinja_md, page_content, pages, None)
+        .map_err(|e| HugsError::template_render_named(source_name, content_jinja_md, &e.error, &e.hints))?;
 
     markdown::to_html_with_options(&content_md, &markdown_options()).map_err(|e| HugsError::MarkdownParse {
         file: source_name.into(),
@@ -266,9 +276,6 @@ pub struct AppData {
     pub config: SiteConfig,
 
     pub cache_bust_registry: CacheBustRegistry,
-
-    /// Pre-compiled root template for efficient page rendering
-    pub root_tera: Tera,
 
     /// Pre-generated CSS for syntax highlighting
     pub highlight_css: String,
@@ -375,12 +382,6 @@ impl AppData {
             None
         };
 
-        // Pre-compile the root template
-        let mut root_tera = Tera::default();
-        root_tera
-            .add_raw_template("root", ROOT_TEMPL)
-            .expect("ROOT_TEMPL should always be valid Tera syntax");
-
         Ok(AppData {
             site_path,
             header_html,
@@ -392,7 +393,6 @@ impl AppData {
             notfound_page,
             config,
             cache_bust_registry: CacheBustRegistry::new(),
-            root_tera,
             highlight_css,
         })
     }
@@ -532,16 +532,15 @@ impl DynamicContext {
         })
     }
 
-    /// Inject this dynamic context into a Tera Context
-    pub fn inject_into(&self, context: &mut Context) {
-        // Convert YamlValue to Tera Value
-        let tera_value = yaml_to_tera_value(&self.param_value);
-        context.insert(&self.param_name, &tera_value);
+    /// Get the parameter name and JSON value for this dynamic context
+    pub fn to_json_pair(&self) -> (String, serde_json::Value) {
+        let json_value = yaml_to_json_value(&self.param_value);
+        (self.param_name.clone(), json_value)
     }
 }
 
-/// Convert a YAML value to a Tera-compatible JSON value
-fn yaml_to_tera_value(value: &YamlValue) -> serde_json::Value {
+/// Convert a YAML value to a JSON value
+fn yaml_to_json_value(value: &YamlValue) -> serde_json::Value {
     match value {
         YamlValue::Null => serde_json::Value::Null,
         YamlValue::Bool(b) => serde_json::Value::Bool(*b),
@@ -556,7 +555,7 @@ fn yaml_to_tera_value(value: &YamlValue) -> serde_json::Value {
         }
         YamlValue::String(s) => serde_json::Value::String(s.clone()),
         YamlValue::Sequence(seq) => {
-            serde_json::Value::Array(seq.iter().map(yaml_to_tera_value).collect())
+            serde_json::Value::Array(seq.iter().map(yaml_to_json_value).collect())
         }
         YamlValue::Mapping(map) => {
             let obj: serde_json::Map<String, serde_json::Value> = map
@@ -566,12 +565,12 @@ fn yaml_to_tera_value(value: &YamlValue) -> serde_json::Value {
                         YamlValue::String(s) => s.clone(),
                         _ => return None,
                     };
-                    Some((key, yaml_to_tera_value(v)))
+                    Some((key, yaml_to_json_value(v)))
                 })
                 .collect();
             serde_json::Value::Object(obj)
         }
-        YamlValue::Tagged(tagged) => yaml_to_tera_value(&tagged.value),
+        YamlValue::Tagged(tagged) => yaml_to_json_value(&tagged.value),
     }
 }
 
@@ -614,10 +613,10 @@ fn evaluate_param_values(
         // Direct array: page_no: [1, 2, 3]
         YamlValue::Sequence(seq) => Ok(seq.clone()),
 
-        // Tera expression: page_no: "{{ range(end=5) }}" or page_no: "range(end=5)"
+        // Jinja expression: page_no: "{{ range(end=5) }}" or page_no: "range(end=5)"
         YamlValue::String(expr) => {
-            // Create a minimal Tera instance to evaluate the expression
-            let mut tera = Tera::default();
+            // Create a minimal MiniJinja environment to evaluate the expression
+            let mut env = Environment::new();
 
             // Strip {{ }} wrapper if present (user can write either form)
             let clean_expr = expr
@@ -630,7 +629,7 @@ fn evaluate_param_values(
             // Wrap expression to output JSON array
             let template = format!("{{% set result = {} %}}[{{% for item in result %}}{{{{ item }}}}{{% if not loop.last %}},{{% endif %}}{{% endfor %}}]", clean_expr);
 
-            tera.add_raw_template("expr", &template).map_err(|e| {
+            env.add_template("expr", &template).map_err(|e| {
                 HugsError::DynamicExprEval {
                     file: source_path.display().to_string().into(),
                     param_name: param_name.into(),
@@ -639,8 +638,16 @@ fn evaluate_param_values(
                 }
             })?;
 
-            let context = Context::new();
-            let output = tera.render("expr", &context).map_err(|e| {
+            let tmpl = env.get_template("expr").map_err(|e| {
+                HugsError::DynamicExprEval {
+                    file: source_path.display().to_string().into(),
+                    param_name: param_name.into(),
+                    expression: expr.clone(),
+                    reason: e.to_string(),
+                }
+            })?;
+
+            let output = tmpl.render(()).map_err(|e| {
                 HugsError::DynamicExprEval {
                     file: source_path.display().to_string().into(),
                     param_name: param_name.into(),
@@ -918,7 +925,7 @@ pub async fn resolve_path_to_doc(
         .unwrap_or(&resolvable_path);
     let relative_path_str = relative_path.display().to_string();
 
-    let doc_content_tera = tokio::fs::read_to_string(&resolvable_path)
+    let doc_content_jinja = tokio::fs::read_to_string(&resolvable_path)
         .await
         .with_file_read(&resolvable_path)?;
 
@@ -937,13 +944,8 @@ pub async fn resolve_path_to_doc(
         syntax_highlighting_enabled: false,
     };
 
-    let context =
-        Context::from_serialize(&initial_page_content).map_err(|e| HugsError::TemplateContext {
-            reason: e.to_string(),
-        })?;
-
-    let doc_content = render_template(&doc_content_tera, &context, &app_data.pages, None)
-        .map_err(|e| HugsError::template_render(&resolvable_path, &doc_content_tera, e))?;
+    let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None)
+        .map_err(|e| HugsError::template_render(&resolvable_path, &doc_content_jinja, e.error, &e.hints))?;
 
     let (frontmatter, body) =
         markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content).map_err(|e| {
@@ -982,7 +984,7 @@ pub async fn resolve_dynamic_doc(
 
     let relative_path_str = source_file_path.to_string();
 
-    let doc_content_tera = tokio::fs::read_to_string(&resolvable_path)
+    let doc_content_jinja = tokio::fs::read_to_string(&resolvable_path)
         .await
         .with_file_read(&resolvable_path)?;
 
@@ -1007,17 +1009,19 @@ pub async fn resolve_dynamic_doc(
         syntax_highlighting_enabled: false,
     };
 
-    // Create context and inject the dynamic parameter
-    let mut context =
-        Context::from_serialize(&initial_page_content).map_err(|e| HugsError::TemplateContext {
-            reason: e.to_string(),
-        })?;
+    // Create a merged context with the dynamic parameter
+    let mut context = serde_json::to_value(&initial_page_content).map_err(|e| HugsError::TemplateContext {
+        reason: e.to_string(),
+    })?;
 
     // Inject the dynamic parameter (e.g., `slug` = "hello")
-    dynamic_ctx.inject_into(&mut context);
+    let (param_name, param_value) = dynamic_ctx.to_json_pair();
+    if let serde_json::Value::Object(ref mut map) = context {
+        map.insert(param_name, param_value);
+    }
 
-    let doc_content = render_template(&doc_content_tera, &context, &app_data.pages, None)
-        .map_err(|e| HugsError::template_render(&resolvable_path, &doc_content_tera, e))?;
+    let doc_content = render_template(&doc_content_jinja, context, &app_data.pages, None)
+        .map_err(|e| HugsError::template_render(&resolvable_path, &doc_content_jinja, e.error, &e.hints))?;
 
     let (frontmatter, body) =
         markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content).map_err(|e| {
@@ -1044,7 +1048,7 @@ pub async fn resolve_dynamic_doc(
 pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Option<String> {
     let notfound_path = app_data.notfound_page.as_ref()?;
 
-    let doc_content_tera = tokio::fs::read_to_string(notfound_path).await.ok()?;
+    let doc_content_jinja = tokio::fs::read_to_string(notfound_path).await.ok()?;
 
     let initial_page_content = PageContent {
         title: "",
@@ -1059,8 +1063,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
         syntax_highlighting_enabled: false,
     };
 
-    let context = Context::from_serialize(&initial_page_content).ok()?;
-    let doc_content = render_template(&doc_content_tera, &context, &app_data.pages, None).ok()?;
+    let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None).ok()?;
 
     let (frontmatter, body) = markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content).ok()?;
 
@@ -1080,9 +1083,8 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
         syntax_highlighting_enabled: app_data.config.build.syntax_highlighting.enabled,
     };
 
-    let context = Context::from_serialize(&content).ok()?;
     let cache_bust = app_data.cache_bust_function();
-    let html_out = render_root_template(app_data, &context, &cache_bust).ok()?;
+    let html_out = render_root_template(app_data, &content, &cache_bust).ok()?;
 
     Some(html_out)
 }
@@ -1250,12 +1252,7 @@ fn render_page_html_internal(
         syntax_highlighting_enabled: app_data.config.build.syntax_highlighting.enabled,
     };
 
-    let context =
-        Context::from_serialize(&content).map_err(|e| HugsError::TemplateContext {
-            reason: e.to_string(),
-        })?;
-
     let cache_bust = app_data.cache_bust_function();
-    render_root_template(app_data, &context, &cache_bust)
-        .map_err(|e| HugsError::template_render_named("root.tera", ROOT_TEMPL, &e))
+    render_root_template(app_data, &content, &cache_bust)
+        .map_err(|e| HugsError::template_render_named("root.jinja", ROOT_TEMPL, &e.error, &e.hints))
 }

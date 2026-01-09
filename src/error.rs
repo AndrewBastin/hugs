@@ -135,7 +135,7 @@ pub enum HugsError {
     #[error("I ran into a problem while rendering a template in {file}")]
     #[diagnostic(
         code(hugs::template::render),
-        help("Check your Tera template syntax. Common issues include:\n- Unclosed {{ braces }} or {{% blocks %}}\n- Referencing a variable that doesn't exist\n- Incorrect filter usage")
+        help("{help_text}")
     )]
     TemplateRender {
         file: StyledPath,
@@ -144,6 +144,7 @@ pub enum HugsError {
         #[label("{reason}")]
         span: SourceSpan,
         reason: String,
+        help_text: String,
     },
 
     #[error("I couldn't create the template context")]
@@ -302,7 +303,7 @@ pub enum HugsError {
     #[error("I couldn't parse the dynamic parameter config in {file}")]
     #[diagnostic(
         code(hugs::dynamic::param_parse),
-        help("The `{param_name}` field must be either an array or a Tera expression string.\n\nExamples:\n{param_name}: [1, 2, 3]\n{param_name}: \"{{{{ range(end=5) }}}}\"")
+        help("The `{param_name}` field must be either an array or a Jinja expression string.\n\nExamples:\n{param_name}: [1, 2, 3]\n{param_name}: \"{{{{ range(end=5) }}}}\"")
     )]
     DynamicParamParse {
         file: StyledPath,
@@ -310,7 +311,7 @@ pub enum HugsError {
         reason: String,
     },
 
-    #[error("I couldn't evaluate the Tera expression for `{param_name}` in {file}")]
+    #[error("I couldn't evaluate the Jinja expression for `{param_name}` in {file}")]
     #[diagnostic(
         code(hugs::dynamic::expr_eval),
         help("The expression `{expression}` failed to evaluate.\n\nMake sure it produces an array. Common functions:\n- range(end=5) -> [0, 1, 2, 3, 4]\n- range(start=1, end=6) -> [1, 2, 3, 4, 5]")
@@ -388,35 +389,33 @@ impl HugsError {
         }
     }
 
-    /// Create a template render error, attempting to extract line info from Tera error
-    pub fn template_render(path: &Path, content: &str, error: tera::Error) -> Self {
-        // Use Debug format which includes more details like line numbers
-        let error_str = format!("{:?}", error);
-        let span = extract_tera_span(&error_str, content);
-        // Use Display for the user-facing reason (cleaner)
-        let reason = error.to_string();
+    /// Create a template render error, attempting to extract line info from MiniJinja error
+    pub fn template_render(path: &Path, content: &str, error: minijinja::Error, hints: &TemplateHints) -> Self {
+        let span = extract_template_span(&error, content);
+        let reason = format_template_error_reason(&error);
+        let help_text = template_error_help(&error, hints);
 
         HugsError::TemplateRender {
             file: StyledPath::from(path),
             src: NamedSource::new(path.display().to_string(), content.to_string()),
             span,
             reason,
+            help_text,
         }
     }
 
     /// Create a template render error with a custom path name (for inline templates)
-    pub fn template_render_named(name: &str, content: &str, error: &tera::Error) -> Self {
-        // Use Debug format which includes more details like line numbers
-        let error_str = format!("{:?}", error);
-        let span = extract_tera_span(&error_str, content);
-        // Use Display for the user-facing reason (cleaner)
-        let reason = error.to_string();
+    pub fn template_render_named(name: &str, content: &str, error: &minijinja::Error, hints: &TemplateHints) -> Self {
+        let span = extract_template_span(error, content);
+        let reason = format_template_error_reason(error);
+        let help_text = template_error_help(error, hints);
 
         HugsError::TemplateRender {
             file: StyledPath::from(name),
             src: NamedSource::new(name.to_string(), content.to_string()),
             span,
             reason,
+            help_text,
         }
     }
 
@@ -449,10 +448,20 @@ impl HugsError {
     }
 }
 
-/// Extract source span from Tera error message by looking for line numbers
-fn extract_tera_span(error_str: &str, content: &str) -> SourceSpan {
-    // Tera errors often contain patterns like "--> 13:1" or "at line 5"
-    if let Some(line_num) = extract_line_number(error_str) {
+/// Extract source span from MiniJinja error
+/// Uses byte range if available (debug feature), otherwise falls back to line number
+fn extract_template_span(error: &minijinja::Error, content: &str) -> SourceSpan {
+    // Try byte range first (most precise) - requires debug feature
+    if let Some(range) = error.range() {
+        // Clamp range to content bounds
+        let start = range.start.min(content.len());
+        let end = range.end.min(content.len());
+        let len = (end - start).max(1);
+        return SourceSpan::new(start.into(), len.into());
+    }
+
+    // Fall back to line number
+    if let Some(line_num) = error.line() {
         let offset: usize = content
             .lines()
             .take(line_num.saturating_sub(1))
@@ -465,52 +474,332 @@ fn extract_tera_span(error_str: &str, content: &str) -> SourceSpan {
             .map(|l| l.len().max(1))
             .unwrap_or(1);
 
-        SourceSpan::new(offset.into(), line_len.into())
-    } else {
-        SourceSpan::from((0_usize, 1_usize))
+        return SourceSpan::new(offset.into(), line_len.into());
+    }
+
+    SourceSpan::from((0_usize, 1_usize))
+}
+
+/// Format a clean error message from MiniJinja error
+/// Uses detail() for cleaner messages when available
+fn format_template_error_reason(error: &minijinja::Error) -> String {
+    // detail() provides a cleaner message without the full context
+    if let Some(detail) = error.detail() {
+        return detail.to_string();
+    }
+    error.to_string()
+}
+
+/// Template hints extracted from the MiniJinja environment for error suggestions
+#[derive(Clone, Default)]
+pub struct TemplateHints {
+    pub filters: Vec<String>,
+    pub functions: Vec<String>,
+    pub tests: Vec<String>,
+    pub variables: Vec<String>,
+}
+
+impl TemplateHints {
+    /// Extract hints from a MiniJinja environment
+    ///
+    /// For functions: uses `env.globals()` to get all registered globals (including functions)
+    /// For filters/tests: uses documented MiniJinja builtins (no introspection API available)
+    /// For variables: uses the known PageContent struct fields
+    pub fn from_environment(env: &minijinja::Environment) -> Self {
+        // Extract functions dynamically from globals
+        let functions: Vec<String> = env
+            .globals()
+            .map(|(name, _)| name.to_string())
+            .collect();
+
+        // MiniJinja builtin filters (from minijinja 2.x documentation)
+        // https://docs.rs/minijinja/latest/minijinja/filters/
+        let filters = vec![
+            // Type conversion
+            "bool", "float", "int", "list", "string",
+            // String operations
+            "capitalize", "escape", "e", "lower", "replace", "safe", "split", "title", "trim", "upper", "urlencode",
+            // Sequence operations
+            "batch", "chain", "first", "join", "last", "length", "lines", "reverse", "slice", "sort", "unique", "zip",
+            // Numeric operations
+            "abs", "max", "min", "round", "sum",
+            // Object/Dictionary operations
+            "attr", "dictsort", "items",
+            // Filtering/Selection
+            "default", "d", "map", "reject", "rejectattr", "select", "selectattr",
+            // Grouping
+            "groupby",
+            // Output formatting
+            "format", "indent", "pprint", "tojson",
+        ].into_iter().map(String::from).collect();
+
+        // MiniJinja builtin tests (from minijinja 2.x documentation)
+        // https://docs.rs/minijinja/latest/minijinja/tests/
+        // Note: tests are used without the "is_" prefix in templates (e.g., `is odd` not `is is_odd`)
+        let tests = vec![
+            "boolean", "defined", "divisibleby", "endingwith", "eq", "equalto",
+            "even", "false", "filter", "float", "ge", "gt", "in", "integer",
+            "iterable", "le", "lower", "lt", "mapping", "ne", "none", "number",
+            "odd", "safe", "sameas", "sequence", "startingwith", "string",
+            "test", "true", "undefined", "upper",
+        ].into_iter().map(String::from).collect();
+
+        // Variables from PageContent struct (our code, so we know these)
+        let variables = vec![
+            "title", "content", "url", "base", "path_class",
+            "header", "nav", "footer", "dev_script", "seo",
+            "syntax_highlighting_enabled",
+        ].into_iter().map(String::from).collect();
+
+        Self { filters, functions, tests, variables }
     }
 }
 
-/// Try to extract a line number from an error string
-fn extract_line_number(s: &str) -> Option<usize> {
-    // Try "--> LINE:COL" pattern (pest/Tera parser errors)
-    // e.g., "--> 13:1" means line 13, column 1
-    if let Some(idx) = s.find("--> ") {
-        let rest = &s[idx + 4..];
-        let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if let Ok(n) = num_str.parse() {
-            return Some(n);
+/// Calculate edit distance between two strings (Levenshtein distance)
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a = a.to_lowercase();
+    let b = b.to_lowercase();
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let m = a_chars.len();
+    let n = b_chars.len();
+
+    if m == 0 { return n; }
+    if n == 0 { return m; }
+
+    let mut dp = vec![vec![0; n + 1]; m + 1];
+
+    for i in 0..=m { dp[i][0] = i; }
+    for j in 0..=n { dp[0][j] = j; }
+
+    for i in 1..=m {
+        for j in 1..=n {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
         }
     }
 
-    // Try "at line X" pattern
-    if let Some(idx) = s.find("at line ") {
-        let rest = &s[idx + 8..];
-        let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if let Ok(n) = num_str.parse() {
-            return Some(n);
+    dp[m][n]
+}
+
+/// Find the best fuzzy match from a list of candidates
+fn find_best_match<'a>(name: &str, candidates: &'a [String]) -> Option<&'a str> {
+    let name_lower = name.to_lowercase();
+    let max_distance = (name.len() / 2).max(2);
+
+    candidates
+        .iter()
+        .filter_map(|candidate| {
+            let distance = edit_distance(&name_lower, candidate);
+            if distance <= max_distance && distance > 0 {
+                Some((candidate.as_str(), distance))
+            } else {
+                None
+            }
+        })
+        .min_by_key(|(_, distance)| *distance)
+        .map(|(candidate, _)| candidate)
+}
+
+/// Extract the problematic identifier from an error detail
+fn extract_identifier(detail: &str) -> Option<&str> {
+    // Match patterns like: `foo`, 'foo', "foo"
+    if let Some(start) = detail.find('`') {
+        let rest = &detail[start + 1..];
+        if let Some(end) = rest.find('`') {
+            return Some(&rest[..end]);
+        }
+    }
+    if let Some(start) = detail.find('\'') {
+        let rest = &detail[start + 1..];
+        if let Some(end) = rest.find('\'') {
+            return Some(&rest[..end]);
         }
     }
 
-    // Try "__tera_one_off:X" pattern
-    if let Some(idx) = s.find("__tera_one_off:") {
-        let rest = &s[idx + 15..];
-        let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if let Ok(n) = num_str.parse() {
-            return Some(n);
+    // MiniJinja format: "filter NAME is unknown", "function NAME is unknown", etc.
+    // Also handles: "variable NAME is undefined", "test NAME is unknown"
+    let patterns = [
+        "filter ", "function ", "variable ", "test ", "method ",
+    ];
+    for pattern in patterns {
+        if let Some(start) = detail.find(pattern) {
+            let rest = &detail[start + pattern.len()..];
+            // Find the end of the identifier (space or end of string)
+            let end = rest.find(' ').unwrap_or(rest.len());
+            if end > 0 {
+                return Some(&rest[..end]);
+            }
         }
     }
 
-    // Try "template:X" pattern
-    if let Some(idx) = s.find("template:") {
-        let rest = &s[idx + 9..];
-        let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if let Ok(n) = num_str.parse() {
-            return Some(n);
+    // MiniJinja also uses: "NAME is unknown" or "NAME is undefined" (without type prefix)
+    if let Some(pos) = detail.find(" is unknown") {
+        let before = &detail[..pos];
+        // Get the last word before " is unknown"
+        if let Some(start) = before.rfind(' ') {
+            return Some(&before[start + 1..]);
+        } else if !before.is_empty() {
+            return Some(before);
+        }
+    }
+    if let Some(pos) = detail.find(" is undefined") {
+        let before = &detail[..pos];
+        if let Some(start) = before.rfind(' ') {
+            return Some(&before[start + 1..]);
+        } else if !before.is_empty() {
+            return Some(before);
         }
     }
 
     None
+}
+
+/// Generate contextual help text based on the error kind
+fn template_error_help(error: &minijinja::Error, hints: &TemplateHints) -> String {
+    use minijinja::ErrorKind;
+
+    let detail = error.detail().unwrap_or_default();
+    let identifier = extract_identifier(detail);
+
+    match error.kind() {
+        ErrorKind::UndefinedError => {
+            let mut help = String::from(
+                "I couldn't find this variable or attribute in the template context.\n\n"
+            );
+
+            if let Some(name) = identifier {
+                if let Some(suggestion) = find_best_match(name, &hints.variables) {
+                    help.push_str(&format!(
+                        "Hint: Did you mean `{}`?\n\n",
+                        suggestion
+                    ));
+                }
+            }
+
+            help.push_str(
+                "Make sure it's spelled correctly and defined in your page frontmatter.\n\
+                 Common variables: title, content, url, path"
+            );
+            help
+        }
+        ErrorKind::UnknownFilter => {
+            let mut help = String::from(
+                "I don't recognize this filter.\n\n"
+            );
+
+            if let Some(name) = identifier {
+                if let Some(suggestion) = find_best_match(name, &hints.filters) {
+                    help.push_str(&format!(
+                        "Hint: Did you mean `{}`?\n\n",
+                        suggestion
+                    ));
+                }
+            }
+
+            help.push_str(
+                "Here are some filters you can use:\n\
+                 - Text: safe, escape, lower, upper, title, trim, replace\n\
+                 - Lists: first, last, length, reverse, sort, join\n\
+                 - Values: default, int, float, abs, round"
+            );
+            help
+        }
+        ErrorKind::UnknownFunction => {
+            let mut help = String::from(
+                "I don't recognize this function.\n\n"
+            );
+
+            if let Some(name) = identifier {
+                if let Some(suggestion) = find_best_match(name, &hints.functions) {
+                    help.push_str(&format!(
+                        "Hint: Did you mean `{}`?\n\n",
+                        suggestion
+                    ));
+                }
+            }
+
+            // Build a dynamic list of available functions
+            let func_list = if hints.functions.is_empty() {
+                "No custom functions available".to_string()
+            } else {
+                hints.functions.join(", ")
+            };
+
+            help.push_str(&format!(
+                "Available functions: {}\n\n\
+                 Common usage:\n\
+                 - pages(within='/blog/') - get a list of pages\n\
+                 - cache_bust(path='/file.css') - add cache-busting hash\n\
+                 - range(end=5) - generate a sequence of numbers",
+                func_list
+            ));
+            help
+        }
+        ErrorKind::UnknownTest => {
+            let mut help = String::from(
+                "I don't recognize this test.\n\n"
+            );
+
+            if let Some(name) = identifier {
+                if let Some(suggestion) = find_best_match(name, &hints.tests) {
+                    help.push_str(&format!(
+                        "Hint: Did you mean `{}`?\n\n",
+                        suggestion
+                    ));
+                }
+            }
+
+            help.push_str(
+                "Here are some tests you can use:\n\
+                 - Existence: defined, undefined, none\n\
+                 - Numbers: odd, even, divisibleby(n)\n\
+                 - Comparison: eq, ne, lt, le, gt, ge"
+            );
+            help
+        }
+        ErrorKind::SyntaxError => {
+            "I had trouble parsing this template.\n\n\
+             Here are some things to check:\n\
+             - Are all your {{ braces }} and {% blocks %} properly closed?\n\
+             - Do you have matching {% endif %}, {% endfor %}, etc.?\n\
+             - Are strings properly quoted?"
+                .to_string()
+        }
+        ErrorKind::MissingArgument => {
+            "It looks like this function is missing a required argument.\n\n\
+             Double-check the function signature and make sure you've provided \
+             all the required parameters."
+                .to_string()
+        }
+        ErrorKind::TooManyArguments => {
+            "This function received more arguments than it expects.\n\n\
+             Double-check the function signature - you may have an extra parameter."
+                .to_string()
+        }
+        ErrorKind::InvalidOperation => {
+            "I can't perform this operation on these types of values.\n\n\
+             For example, you can't add a string to a number, or access \
+             an attribute on something that isn't an object."
+                .to_string()
+        }
+        ErrorKind::CannotUnpack => {
+            "I couldn't unpack this value.\n\n\
+             Make sure you're iterating over something that's actually a list, \
+             or that the value can be destructured the way you're trying to."
+                .to_string()
+        }
+        _ => {
+            "I ran into a problem with this template.\n\n\
+             Here are some things to check:\n\
+             - Are all your {{ braces }} and {% blocks %} properly closed?\n\
+             - Are you referencing variables that exist?\n\
+             - Are filters and functions spelled correctly?"
+                .to_string()
+        }
+    }
 }
 
 /// Extension trait for adding Hugs error context to IO operations
@@ -651,11 +940,12 @@ impl Clone for HugsError {
                 span: *span,
                 reason: reason.clone(),
             },
-            HugsError::TemplateRender { file, src, span, reason } => HugsError::TemplateRender {
+            HugsError::TemplateRender { file, src, span, reason, help_text } => HugsError::TemplateRender {
                 file: file.clone(),
                 src: NamedSource::new(src.name().to_string(), src.inner().clone()),
                 span: *span,
                 reason: reason.clone(),
+                help_text: help_text.clone(),
             },
             HugsError::TemplateContext { reason } => {
                 HugsError::TemplateContext { reason: reason.clone() }
