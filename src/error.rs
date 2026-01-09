@@ -374,6 +374,10 @@ pub enum HugsError {
     )]
     DirNotEmpty { path: StyledPath },
 
+    #[error("I couldn't read your input: {cause}")]
+    #[diagnostic(code(hugs::new::input_error))]
+    InputError { cause: String },
+
     #[error("I couldn't create the output directory at {path}")]
     #[diagnostic(code(hugs::build::create_dir))]
     CreateDir {
@@ -1141,6 +1145,9 @@ impl Clone for HugsError {
             },
             HugsError::DirNotEmpty { path } => HugsError::DirNotEmpty {
                 path: path.clone(),
+            },
+            HugsError::InputError { cause } => HugsError::InputError {
+                cause: cause.clone(),
             },
             HugsError::CreateDir { path, cause } => HugsError::CreateDir {
                 path: path.clone(),

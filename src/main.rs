@@ -42,10 +42,11 @@ enum Command {
         #[arg(short, long, default_value = "dist")]
         output: PathBuf,
     },
-    /// Initialize a new Hugs site
+    /// Create a new Hugs site
+    #[command(after_help = "If you don't provide a name, I'll ask you for one!")]
     New {
-        /// Path to create the new site
-        path: PathBuf,
+        /// Name for your new site folder (created in current directory)
+        name: Option<PathBuf>,
     },
 }
 
@@ -87,8 +88,8 @@ async fn main() -> miette::Result<()> {
         Command::Build { path, output } => {
             crate::build::run_build(path, output).await?;
         }
-        Command::New { path } => {
-            crate::new::create_site(path).await?;
+        Command::New { name } => {
+            crate::new::create_site(name).await?;
         }
     }
 
