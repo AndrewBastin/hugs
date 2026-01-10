@@ -5,8 +5,8 @@ use dialoguer::{theme::ColorfulTheme, Input};
 use include_dir::{include_dir, Dir};
 use owo_colors::OwoColorize;
 use tokio::fs;
-use tracing::info;
 
+use crate::console;
 use crate::error::{HugsError, Result, StyledPath};
 
 /// The template directory embedded at compile time
@@ -46,9 +46,8 @@ pub async fn create_site(name: Option<PathBuf>) -> Result<()> {
         }
     }
 
-    info!("Creating new site at {}", path.display());
+    console::status("Creating", format!("new site at {}", path.display()));
 
-    // Extract embedded template directory
     extract_dir(&TEMPLATE_DIR, &path).await?;
 
     // Print success message

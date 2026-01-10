@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod build;
 mod config;
+mod console;
 mod dev;
 mod doc;
 mod error;
@@ -61,16 +61,6 @@ enum Command {
     },
 }
 
-fn setup_logging() {
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "hugs=info".into()),
-        )
-        .with(tracing_subscriber::fmt::layer().without_time())
-        .init();
-}
-
 #[tokio::main]
 async fn main() -> miette::Result<()> {
     miette::set_hook(Box::new(|_| {
@@ -85,8 +75,6 @@ async fn main() -> miette::Result<()> {
         )
     }))
     .expect("Failed to set miette hook");
-
-    setup_logging();
 
     let args = Args::parse();
 

@@ -9,10 +9,10 @@ use serde_yaml::Value as YamlValue;
 use sha2::{Sha256, Digest};
 use minijinja::{Environment, State, Value};
 use tokio::task::JoinSet;
-use tracing::warn;
 use walkdir::WalkDir;
 
 use crate::config::SiteConfig;
+use crate::console;
 use crate::error::{HugsError, HugsResultExt, Result, TemplateHints};
 
 /// Create markdown options (can't be static due to non-Send callback fields)
@@ -1178,11 +1178,11 @@ async fn scan_pages(site_path: &PathBuf) -> Result<ScanResult> {
             let content = match tokio::fs::read_to_string(&path).await {
                 Ok(c) => c,
                 Err(e) => {
-                    warn!(
-                        file = %relative_path.display(),
-                        error = %e,
-                        "I couldn't read this file, skipping it"
-                    );
+                    console::warn(format!(
+                        "couldn't read {}: {}, skipping",
+                        relative_path.display(),
+                        e
+                    ));
                     return None;
                 }
             };
@@ -1190,11 +1190,11 @@ async fn scan_pages(site_path: &PathBuf) -> Result<ScanResult> {
             let frontmatter = match markdown_frontmatter::parse::<YamlValue>(&content) {
                 Ok((fm, _body)) => fm,
                 Err(e) => {
-                    warn!(
-                        file = %relative_path.display(),
-                        error = %e,
-                        "I couldn't parse the frontmatter in this file, using empty metadata"
-                    );
+                    console::warn(format!(
+                        "couldn't parse frontmatter in {}: {}, using empty metadata",
+                        relative_path.display(),
+                        e
+                    ));
                     YamlValue::Mapping(serde_yaml::Mapping::new())
                 }
             };

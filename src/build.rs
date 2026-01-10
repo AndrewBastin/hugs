@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::task::JoinSet;
-use tracing::info;
 use walkdir::WalkDir;
 
+use crate::console;
 use crate::error::{HugsError, Result};
 use crate::feed::{collect_feed_items, generate_atom, generate_rss};
 use crate::minify::{minify_css_content, minify_html_content, MinifyConfig};
@@ -48,11 +49,8 @@ impl BuildWarnings {
 }
 
 pub async fn run_build(site_path: PathBuf, output_path: PathBuf) -> Result<()> {
-    info!(
-        site = %site_path.display(),
-        output = %output_path.display(),
-        "Building site"
-    );
+    console::start_build();
+    console::status("Building", format!("{} -> {}", site_path.display(), output_path.display()));
 
     let mut warnings = BuildWarnings::default();
 
@@ -86,16 +84,10 @@ pub async fn run_build(site_path: PathBuf, output_path: PathBuf) -> Result<()> {
     write_theme_css(&app_data, &output_path, &minify_config).await?;
 
     let sitemap_msg = if sitemap_generated { ", sitemap" } else { "" };
-    info!(
-        pages = page_count,
-        feeds = feed_count,
-        assets = asset_count,
-        "Build complete! {} pages, {} feeds{}, {} assets",
-        page_count,
-        feed_count,
-        sitemap_msg,
-        asset_count
-    );
+    console::finished(format!(
+        "{} pages, {} feeds{}, {} assets",
+        page_count, feed_count, sitemap_msg, asset_count
+    ));
 
     // Display any collected warnings with fancy formatting
     warnings.display();
@@ -105,7 +97,7 @@ pub async fn run_build(site_path: PathBuf, output_path: PathBuf) -> Result<()> {
 
 async fn clean_output_directory(output_path: &PathBuf) -> Result<()> {
     if output_path.exists() {
-        info!("Cleaning output directory...");
+        console::status("Cleaning", output_path.display());
         tokio::fs::remove_dir_all(output_path)
             .await
             .map_err(|e| HugsError::CreateDir {
@@ -128,7 +120,8 @@ async fn render_all_pages(
     minify_config: MinifyConfig,
 ) -> Result<usize> {
     let page_count = app_data.pages.len();
-    info!(count = page_count, "Rendering pages...");
+    let progress = console::create_progress_bar(page_count as u64, "pages");
+    let completed = Arc::new(AtomicUsize::new(0));
 
     let mut join_set: JoinSet<Result<()>> = JoinSet::new();
 
@@ -137,19 +130,15 @@ async fn render_all_pages(
         let output_path = output_path.clone();
         let url = page_info.url.clone();
         let file_path = page_info.file_path.clone();
-        // Check if this is a dynamic page and extract context
+        let completed = Arc::clone(&completed);
         let dynamic_ctx = DynamicContext::from_page_info(page_info);
 
         join_set.spawn(async move {
-            // Resolve the page and render - use appropriate method for dynamic vs static pages
             let html_out = if let Some(ctx) = &dynamic_ctx {
-                // Dynamic page: resolve from source file with context
                 let (frontmatter, doc_html, _resolvable_path, frontmatter_json) =
                     resolve_dynamic_doc(&file_path, ctx, &app_data).await?;
-                // Use the resolved URL (e.g., /docs/2) for proper SEO
                 render_dynamic_page_html(&frontmatter, &frontmatter_json, &doc_html, &url, &app_data, "")?
             } else {
-                // Static page: resolve from URL path
                 let request_path = url.trim_start_matches('/');
                 let (frontmatter, doc_html, resolvable_path, frontmatter_json) =
                     resolve_path_to_doc(request_path, &app_data)
@@ -161,10 +150,8 @@ async fn render_all_pages(
                 render_page_html(&frontmatter, &frontmatter_json, &doc_html, &resolvable_path, &app_data, "")?
             };
 
-            // Apply minification if enabled
             let final_html = minify_html_content(&html_out, &minify_config);
 
-            // Write to output
             let output_file = url_to_output_path(&url, &output_path);
             if let Some(parent) = output_file.parent() {
                 tokio::fs::create_dir_all(parent)
@@ -175,11 +162,6 @@ async fn render_all_pages(
                     })?;
             }
 
-            info!(
-                source = %file_path,
-                output = %output_file.display(),
-                "Rendered page"
-            );
             tokio::fs::write(&output_file, final_html)
                 .await
                 .map_err(|e| HugsError::FileWrite {
@@ -187,18 +169,19 @@ async fn render_all_pages(
                     cause: e,
                 })?;
 
+            completed.fetch_add(1, Ordering::Relaxed);
             Ok(())
         });
     }
 
-    // Wait for all tasks to complete
     while let Some(result) = join_set.join_next().await {
-        // Propagate both JoinError (task panic) and render errors
+        progress.set_position(completed.load(Ordering::Relaxed) as u64);
         result.map_err(|e| HugsError::TaskJoin {
             reason: e.to_string(),
         })??;
     }
 
+    console::progress_finish(&progress);
     Ok(page_count)
 }
 
@@ -224,7 +207,7 @@ async fn render_404_page(
     if let Some(html) = render_notfound_page(app_data, "").await {
         let final_html = minify_html_content(&html, minify_config);
         let output_file = output_path.join("404.html");
-        info!(output = %output_file.display(), "Rendered 404 page");
+        console::status("Rendering", "404.html");
         tokio::fs::write(&output_file, final_html)
             .await
             .map_err(|e| HugsError::FileWrite {
@@ -278,7 +261,7 @@ async fn copy_static_assets(site_path: &PathBuf, output_path: &PathBuf) -> Resul
     }
 
     if count > 0 {
-        info!(count, "Copied static assets");
+        console::status("Copying", format!("{} static assets", count));
     }
 
     Ok(count)
@@ -289,13 +272,12 @@ async fn write_theme_css(
     output_path: &PathBuf,
     minify_config: &MinifyConfig,
 ) -> Result<()> {
-    // Skip if theme.css was cache-busted (it's already written with hashed name)
     let entries = app_data.cache_bust_registry.entries();
     if entries.contains_key("/theme.css") {
         return Ok(());
     }
 
-    info!("Writing theme.css");
+    console::status("Writing", "theme.css");
     let css_path = output_path.join("theme.css");
     let final_css = minify_css_content(&app_data.theme_css, minify_config);
     tokio::fs::write(&css_path, final_css)
@@ -322,13 +304,8 @@ async fn write_cache_busted_assets(
         let hashed_filename = hashed_path.trim_start_matches('/');
 
         if original_path == "/theme.css" {
-            // theme.css is pre-loaded in app_data
             let dest = output_path.join(hashed_filename);
-            info!(
-                original = %original_path,
-                hashed = %hashed_path,
-                "Writing cache-busted asset"
-            );
+            console::status("Writing", &hashed_path);
             let final_css = minify_css_content(&app_data.theme_css, minify_config);
             tokio::fs::write(&dest, final_css)
                 .await
@@ -337,13 +314,8 @@ async fn write_cache_busted_assets(
                     cause: e,
                 })?;
         } else if original_path == "/highlight.css" {
-            // highlight.css is pre-generated in app_data
             let dest = output_path.join(hashed_filename);
-            info!(
-                original = %original_path,
-                hashed = %hashed_path,
-                "Writing cache-busted asset"
-            );
+            console::status("Writing", &hashed_path);
             let final_css = minify_css_content(&app_data.highlight_css, minify_config);
             tokio::fs::write(&dest, final_css)
                 .await
@@ -352,7 +324,6 @@ async fn write_cache_busted_assets(
                     cause: e,
                 })?;
         } else {
-            // Regular files: read from site_path
             let src = app_data
                 .site_path
                 .join(original_path.trim_start_matches('/'));
@@ -367,11 +338,7 @@ async fn write_cache_busted_assets(
                     })?;
             }
 
-            info!(
-                original = %original_path,
-                hashed = %hashed_path,
-                "Writing cache-busted asset"
-            );
+            console::status("Writing", &hashed_path);
             tokio::fs::copy(&src, &dest)
                 .await
                 .map_err(|e| HugsError::CopyFile {
@@ -394,11 +361,6 @@ async fn generate_feeds(
         return Ok(0);
     }
 
-    info!(
-        count = app_data.config.feeds.len(),
-        "Generating feed(s)..."
-    );
-
     let mut count = 0;
 
     for feed_config in &app_data.config.feeds {
@@ -409,11 +371,7 @@ async fn generate_feeds(
             match generate_rss(&items, feed_config, &app_data.config.site) {
                 Ok(rss_xml) => {
                     let rss_path = output_path.join(rss_filename);
-                    info!(
-                        file = %rss_filename,
-                        items = items.len(),
-                        "Generated RSS feed"
-                    );
+                    console::status("Generating", format!("{} ({} items)", rss_filename, items.len()));
                     tokio::fs::write(&rss_path, rss_xml)
                         .await
                         .map_err(|e| HugsError::FileWrite {
@@ -433,11 +391,7 @@ async fn generate_feeds(
             match generate_atom(&items, feed_config, &app_data.config.site) {
                 Ok(atom_xml) => {
                     let atom_path = output_path.join(atom_filename);
-                    info!(
-                        file = %atom_filename,
-                        items = items.len(),
-                        "Generated Atom feed"
-                    );
+                    console::status("Generating", format!("{} ({} items)", atom_filename, items.len()));
                     tokio::fs::write(&atom_path, atom_xml)
                         .await
                         .map_err(|e| HugsError::FileWrite {
@@ -461,17 +415,14 @@ async fn generate_sitemap_file(
     output_path: &PathBuf,
     warnings: &mut BuildWarnings,
 ) -> Result<bool> {
-    // Only generate if site.url is configured
     if app_data.config.site.url.is_none() {
         return Ok(false);
     }
 
-    info!("Generating sitemap.xml...");
-
     match generate_sitemap(&app_data.pages, &app_data.config.site) {
         Ok(sitemap_xml) => {
             let sitemap_path = output_path.join("sitemap.xml");
-            info!(urls = app_data.pages.len(), "Generated sitemap.xml");
+            console::status("Generating", format!("sitemap.xml ({} urls)", app_data.pages.len()));
             tokio::fs::write(&sitemap_path, sitemap_xml)
                 .await
                 .map_err(|e| HugsError::FileWrite {

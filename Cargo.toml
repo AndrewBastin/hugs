@@ -15,8 +15,7 @@ markdown-frontmatter = { version = "0.4.0", features = ["yaml"] }
 miette = { version = "7.6.0", features = ["fancy", "syntect-highlighter"] }
 minify-html = "0.18"
 thiserror = "2"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+indicatif = "0.17"
 mime_guess = "2.0"
 notify = "8.2.0"
 rss = "2.0.12"

@@ -5,8 +5,8 @@ use actix_web::{App, HttpResponse, HttpServer, get, http::header::ContentType, w
 use include_dir::{Dir, include_dir};
 use owo_colors::OwoColorize;
 use tokio::fs;
-use tracing::{info, warn};
 
+use crate::console;
 use crate::error::{HugsError, Result, StyledPath, StyledNum};
 use crate::minify::{minify_css_content, minify_html_content, MinifyConfig};
 use crate::run::{
@@ -97,15 +97,13 @@ async fn page(path: web::Path<String>, state: web::Data<Arc<DocAppState>>) -> Ht
     }
 }
 
-/// Run the documentation server
 pub async fn run_doc_server(port: Option<u16>, no_open: bool) -> Result<()> {
-    info!("Starting documentation server...");
+    console::status("Starting", "documentation server");
 
-    // Extract docs to temp directory
     let temp_dir = extract_docs_to_temp().await?;
     let docs_path = temp_dir.path().to_path_buf();
 
-    info!(path = %docs_path.display(), "Extracted documentation");
+    console::status("Extracted", docs_path.display());
 
     // Load site data
     let app_data = AppData::load(docs_path).await?;
@@ -131,14 +129,12 @@ pub async fn run_doc_server(port: Option<u16>, no_open: bool) -> Result<()> {
     );
     println!();
 
-    // Open browser (unless --no-open)
     if !no_open {
         let url_clone = url.clone();
         tokio::spawn(async move {
-            // Small delay to ensure server is ready
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             if let Err(e) = open::that(&url_clone) {
-                warn!("Couldn't open browser: {}", e);
+                console::warn(format!("couldn't open browser: {}", e));
                 println!("  Open {} in your browser", url_clone.cyan());
             }
         });

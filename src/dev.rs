@@ -10,7 +10,8 @@ use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher, EventKind, even
 use owo_colors::OwoColorize;
 use thiserror::Error;
 use tokio::sync::{RwLock, broadcast};
-use tracing::{info, warn};
+
+use crate::console;
 
 use crate::error::{render_error_html, HugsError, Result};
 use crate::minify::{minify_css_content, minify_html_content, MinifyConfig};
@@ -398,18 +399,17 @@ fn start_file_watcher(
                 }
             }
 
-            // Perform reload
-            info!("File change detected, reloading...");
+            console::status_cyan("Watching", "file change detected, reloading...");
 
             match AppData::load(site_path_clone.clone()).await {
                 Ok(new_data) => {
                     let mut app_data = state.app_data.write().await;
                     *app_data = new_data;
                     let _ = state.reload_tx.send(());
-                    info!("Reload complete");
+                    console::status("Reloaded", "site data");
                 }
                 Err(e) => {
-                    warn!("I couldn't reload the site data");
+                    console::warn("couldn't reload site data");
                     let report = miette::Report::new(e);
                     eprintln!("{:?}", report);
                 }
@@ -421,8 +421,8 @@ fn start_file_watcher(
 }
 
 pub async fn run_dev_server(path: PathBuf, port: u16, port_explicit: bool) -> Result<()> {
-    info!("Starting development server with live reload...");
-    info!(path = %path.display(), "Watching directory");
+    console::status("Starting", "development server with live reload");
+    console::status("Watching", path.display());
 
     let app_data = AppData::load(path.clone()).await?;
 
@@ -445,10 +445,9 @@ pub async fn run_dev_server(path: PathBuf, port: u16, port_explicit: bool) -> Re
             cause: e,
         })?;
 
-    // Try to bind to a port (retry only if port was not explicitly specified)
     let (server, actual_port) = try_bind_server(Arc::clone(&state), &path, port, port_explicit)?;
 
-    info!(port = actual_port, url = %format!("http://127.0.0.1:{}", actual_port), "Server starting");
+    console::status("Listening", format!("http://127.0.0.1:{}", actual_port));
 
     // Display warning if port changed (after the server starting log)
     if actual_port != port {

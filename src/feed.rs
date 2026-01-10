@@ -1,7 +1,7 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use rss::{ChannelBuilder, GuidBuilder, ItemBuilder};
-use tracing::warn;
 
+use crate::console;
 use crate::config::{FeedConfig, SiteMetadata};
 use crate::error::{HugsError, Result};
 use crate::run::PageInfo;
@@ -125,10 +125,10 @@ fn parse_date_string(s: &str) -> Option<DateTime<Utc>> {
         return Some(DateTime::from_naive_utc_and_offset(ndt, Utc));
     }
 
-    warn!(
-        date = %s,
-        "I couldn't parse this date. Supported formats: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SSZ, YYYY-MM-DD HH:MM:SS"
-    );
+    console::warn(format!(
+        "couldn't parse date '{}'. Supported: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SSZ, YYYY-MM-DD HH:MM:SS",
+        s
+    ));
     None
 }
 
@@ -274,4 +274,3 @@ pub fn generate_atom(
 
     Ok(feed.to_string())
 }
-
