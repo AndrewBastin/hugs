@@ -23,6 +23,14 @@ pub struct BuildConfig {
     /// Syntax highlighting configuration
     #[serde(default)]
     pub syntax_highlighting: SyntaxHighlightConfig,
+
+    /// Reading speed in words per minute for readtime calculation
+    #[serde(default = "default_reading_speed")]
+    pub reading_speed: u32,
+}
+
+fn default_reading_speed() -> u32 {
+    200
 }
 
 fn default_true() -> bool {
@@ -34,6 +42,7 @@ impl Default for BuildConfig {
         Self {
             minify: true,
             syntax_highlighting: SyntaxHighlightConfig::default(),
+            reading_speed: default_reading_speed(),
         }
     }
 }

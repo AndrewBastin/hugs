@@ -307,13 +307,85 @@ fn create_help_test() -> impl Fn(&State, Value) -> std::result::Result<bool, min
     }
 }
 
+/// Create the `readtime` function for minijinja
+/// Usage: {{ readtime(text) }} - returns estimated reading time in minutes for the given markdown text
+fn create_readtime_function(
+    reading_speed: u32,
+) -> impl Fn(String) -> std::result::Result<u32, minijinja::Error> + Send + Sync + 'static {
+    move |text: String| {
+        let word_count = count_words_in_markdown(&text);
+        let minutes = (word_count as f64 / reading_speed as f64).ceil() as u32;
+        Ok(minutes.max(1))
+    }
+}
+
+/// Count words in markdown content, stripping HTML tags and markdown syntax
+fn count_words_in_markdown(text: &str) -> usize {
+    let without_code_blocks = strip_code_blocks(text);
+    let without_html = strip_html_tags(&without_code_blocks);
+    let without_markdown = strip_markdown_syntax(&without_html);
+    without_markdown.split_whitespace().count()
+}
+
+fn strip_code_blocks(text: &str) -> String {
+    let mut result = String::new();
+    let mut in_code_block = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if !in_code_block {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result
+}
+
+fn strip_html_tags(text: &str) -> String {
+    let mut result = String::new();
+    let mut in_tag = false;
+
+    for ch in text.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => result.push(ch),
+            _ => {}
+        }
+    }
+    result
+}
+
+fn strip_markdown_syntax(text: &str) -> String {
+    let mut result = text.to_string();
+    result = result.replace("**", "");
+    result = result.replace("__", "");
+    result = result.replace("~~", "");
+    result = result.replace('*', "");
+    result = result.replace('_', " ");
+    result = result.replace('#', "");
+    result = result.replace('>', "");
+    result = result.replace('[', "");
+    result = result.replace(']', "");
+    result = result.replace('(', " ");
+    result = result.replace(')', " ");
+    result = result.replace('`', "");
+    result
+}
+
 /// Create a configured template environment with custom functions
 fn create_template_env(
     pages: &Arc<Vec<PageInfo>>,
     cache_bust: Option<&CacheBustFunction>,
+    reading_speed: u32,
 ) -> (Environment<'static>, TemplateHints) {
     let mut env = Environment::new();
     env.add_function("pages", create_pages_function(Arc::clone(pages)));
+    env.add_function("readtime", create_readtime_function(reading_speed));
     if let Some(cb) = cache_bust {
         env.add_function("cache_bust", cb.to_minijinja_fn());
     }
@@ -357,8 +429,9 @@ pub fn render_template<T: serde::Serialize>(
     pages: &Arc<Vec<PageInfo>>,
     cache_bust: Option<&CacheBustFunction>,
     macros_template: &str,
+    reading_speed: u32,
 ) -> std::result::Result<String, TemplateError> {
-    let (mut env, hints) = create_template_env(pages, cache_bust);
+    let (mut env, hints) = create_template_env(pages, cache_bust, reading_speed);
 
     // Extract macro names and add them to hints for error suggestions
     let macro_names = extract_macro_names(macros_template);
@@ -391,7 +464,7 @@ pub fn render_root_template<T: serde::Serialize>(
     ctx: T,
     cache_bust: &CacheBustFunction,
 ) -> std::result::Result<String, TemplateError> {
-    let (mut env, hints) = create_template_env(&app_data.pages, Some(cache_bust));
+    let (mut env, hints) = create_template_env(&app_data.pages, Some(cache_bust), app_data.config.build.reading_speed);
 
     // Extract macro names and add them to hints for error suggestions
     let macro_names = extract_macro_names(&app_data.macros_template);
@@ -424,8 +497,9 @@ fn parse_md(
     pages: &Arc<Vec<PageInfo>>,
     source_name: &str,
     macros_template: &str,
+    reading_speed: u32,
 ) -> Result<String> {
-    let content_md = render_template(content_jinja_md, page_content, pages, None, macros_template)
+    let content_md = render_template(content_jinja_md, page_content, pages, None, macros_template, reading_speed)
         .map_err(|e| HugsError::template_render_named(
             source_name,
             content_jinja_md,
@@ -582,9 +656,10 @@ impl AppData {
             syntax_highlighting_enabled: false,
         };
 
-        let header_html = parse_md(&header_md, &initial_page_content, &pages, "_/header.md", &macros_template)?;
-        let footer_html = parse_md(&footer_md, &initial_page_content, &pages, "_/footer.md", &macros_template)?;
-        let nav_html = parse_md(&nav_md, &initial_page_content, &pages, "_/nav.md", &macros_template)?;
+        let reading_speed = config.build.reading_speed;
+        let header_html = parse_md(&header_md, &initial_page_content, &pages, "_/header.md", &macros_template, reading_speed)?;
+        let footer_html = parse_md(&footer_md, &initial_page_content, &pages, "_/footer.md", &macros_template, reading_speed)?;
+        let nav_html = parse_md(&nav_md, &initial_page_content, &pages, "_/nav.md", &macros_template, reading_speed)?;
 
         let notfound_path = site_path.join("[404].md");
         let notfound_page = if notfound_path.exists() {
@@ -1325,7 +1400,7 @@ pub async fn resolve_path_to_doc(
         syntax_highlighting_enabled: false,
     };
 
-    let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None, &app_data.macros_template)
+    let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed)
         .map_err(|e| HugsError::template_render(
             &resolvable_path,
             &doc_content_jinja,
@@ -1418,7 +1493,7 @@ pub async fn resolve_dynamic_doc(
         map.insert(param_name, param_value);
     }
 
-    let doc_content = render_template(&doc_content_jinja, context, &app_data.pages, None, &app_data.macros_template)
+    let doc_content = render_template(&doc_content_jinja, context, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed)
         .map_err(|e| HugsError::template_render(
             &resolvable_path,
             &doc_content_jinja,
@@ -1480,7 +1555,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
         syntax_highlighting_enabled: false,
     };
 
-    let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None, &app_data.macros_template).ok()?;
+    let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed).ok()?;
 
     let (frontmatter, body) = markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content).ok()?;
     let (raw_frontmatter, _) = markdown_frontmatter::parse::<YamlValue>(&doc_content).ok()?;
@@ -1509,6 +1584,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
         &app_data.pages,
         None,
         &app_data.macros_template,
+        app_data.config.build.reading_speed,
     ).ok()?;
 
     let main_content_html = markdown::to_html_with_options(&content_template_rendered, &markdown_options()).ok()?;
@@ -1705,6 +1781,7 @@ fn render_page_html_internal(
         &app_data.pages,
         None,
         &app_data.macros_template,
+        app_data.config.build.reading_speed,
     )
     .map_err(|e| HugsError::template_render_named(
         "_/content.md",

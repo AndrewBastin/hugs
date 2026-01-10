@@ -57,7 +57,8 @@ You can also configure how Hugs builds your site:
 
 ```toml
 [build]
-minify = true  # Minify HTML and CSS (default: true)
+minify = true         # Minify HTML and CSS (default: true)
+reading_speed = 200   # Words per minute for readtime() (default: 200)
 
 [build.syntax_highlighting]
 enabled = true           # Enable code highlighting (default: true)

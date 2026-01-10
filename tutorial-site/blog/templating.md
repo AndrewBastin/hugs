@@ -64,6 +64,23 @@ The `within` argument filters pages to a URL prefix. It automatically **excludes
 
 The `cache_bust()` function adds a content-based hash to asset URLs for cache invalidation. See [Assets & Static Files](/blog/assets#cache-busting) for details.
 
+### The `readtime()` Function
+
+The `readtime()` function calculates estimated reading time in minutes for a given text:
+
+{% raw %}
+```jinja
+{{ readtime(content) }} min read
+```
+{% endraw %}
+
+It strips code blocks, HTML tags, and markdown syntax before counting words. The default reading speed is 200 words per minute, but you can configure this in your `config.toml`:
+
+```toml
+[build]
+reading_speed = 250  # words per minute
+```
+
 ### Filters
 
 Jinja provides filters to transform values. Chain them with the `|` operator:
