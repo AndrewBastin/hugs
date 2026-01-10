@@ -1296,6 +1296,7 @@ dependencies = [
  "actix-web-actors",
  "ansi-to-html",
  "atom_syndication",
+ "base64",
  "chrono",
  "clap",
  "dialoguer",

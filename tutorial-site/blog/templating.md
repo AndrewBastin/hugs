@@ -176,6 +176,36 @@ title: Blog
 
 This automatically lists all blog posts, sorted by their `order` frontmatter field, with links and descriptions. Add a new post, and it appears in the list.
 
+### Debugging with `help`
+
+Not sure what variables or filters are available? Hugs provides a built-in `help` that shows you everything in your current context.
+
+**See all available variables, functions, filters, and tests:**
+
+{% raw %}
+```jinja
+{{ help() }}
+```
+{% endraw %}
+
+**See what filters can be applied to a value:**
+
+{% raw %}
+```jinja
+{{ some_value | help }}
+```
+{% endraw %}
+
+**See what tests can be used with a value:**
+
+{% raw %}
+```jinja
+{% if some_value is help %}{% endif %}
+```
+{% endraw %}
+
+When you use `help`, the page will show an error with detailed information about what's available. It's a debugging tool - remove it once you've found what you need!
+
 ### Try It!
 
 1. Open `blog/index.md`

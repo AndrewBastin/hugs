@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use serde_yaml::Value as YamlValue;
 use sha2::{Sha256, Digest};
-use minijinja::{Environment, Value};
+use minijinja::{Environment, State, Value};
 use tokio::task::JoinSet;
 use tracing::warn;
 use walkdir::WalkDir;
@@ -207,6 +207,106 @@ pub struct TemplateError {
     pub macro_prefix_lines: usize,
 }
 
+/// Help marker prefixes used to identify help requests in error messages
+pub const HELP_MARKER_FUNCTION: &str = "__hugs_help_function__";
+pub const HELP_MARKER_FILTER: &str = "__hugs_help_filter__";
+pub const HELP_MARKER_TEST: &str = "__hugs_help_test__";
+
+/// Create the `help` function for minijinja
+/// Usage: {{ help() }} - shows all available variables, functions, filters, tests, macros
+fn create_help_function(
+    function_names: Vec<String>,
+) -> impl Fn(&State) -> std::result::Result<Value, minijinja::Error> + Send + Sync + 'static {
+    move |state: &State| {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        
+        // Collect variables with their values, sorted alphabetically
+        let mut names: Vec<String> = state
+            .known_variables()
+            .into_iter()
+            .map(|c| c.into_owned())
+            .collect();
+        names.sort();
+        
+        let var_entries: Vec<String> = names
+            .into_iter()
+            .filter_map(|name| {
+                // Filter out registered functions (they appear in known_variables but aren't variables)
+                if function_names.contains(&name) {
+                    return None;
+                }
+                let value_repr = state
+                    .lookup(&name)
+                    .map(|v| format!("{:?}", v))
+                    .unwrap_or_else(|| "?".to_string());
+                // Encode name and value as base64 to handle all special characters
+                let name_b64 = STANDARD.encode(&name);
+                let value_b64 = STANDARD.encode(&value_repr);
+                Some(format!("{}:{}", name_b64, value_b64))
+            })
+            .collect();
+
+        let msg = format!(
+            "{}:variables={}",
+            HELP_MARKER_FUNCTION,
+            var_entries.join(",")
+        );
+
+        Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            msg,
+        ))
+    }
+}
+
+/// Create the `help` filter for minijinja
+/// Usage: {{ value | help }} - shows the value's type/content and applicable filters
+fn create_help_filter() -> impl Fn(&State, Value) -> std::result::Result<Value, minijinja::Error> + Send + Sync + 'static {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    
+    |_state: &State, value: Value| {
+        let value_kind = format!("{:?}", value.kind());
+        let value_repr = format!("{:?}", value);
+        let value_b64 = STANDARD.encode(&value_repr);
+
+        let msg = format!(
+            "{}:kind={}:value={}",
+            HELP_MARKER_FILTER,
+            value_kind,
+            value_b64
+        );
+
+        Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            msg,
+        ))
+    }
+}
+
+/// Create the `help` test for minijinja
+/// Usage: {% if value is help %} - shows the value's type/content and applicable tests
+fn create_help_test() -> impl Fn(&State, Value) -> std::result::Result<bool, minijinja::Error> + Send + Sync + 'static {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    
+    |_state: &State, value: Value| {
+        let value_kind = format!("{:?}", value.kind());
+        let value_repr = format!("{:?}", value);
+        let value_b64 = STANDARD.encode(&value_repr);
+
+        let msg = format!(
+            "{}:kind={}:value={}",
+            HELP_MARKER_TEST,
+            value_kind,
+            value_b64
+        );
+
+        Err(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            msg,
+        ))
+    }
+}
+
 /// Create a configured template environment with custom functions
 fn create_template_env(
     pages: &Arc<Vec<PageInfo>>,
@@ -217,6 +317,14 @@ fn create_template_env(
     if let Some(cb) = cache_bust {
         env.add_function("cache_bust", cb.to_minijinja_fn());
     }
+
+    // Collect function names before adding help (includes builtins + our functions)
+    let mut function_names: Vec<String> = env.globals().map(|(name, _)| name.to_string()).collect();
+    function_names.push("help".to_string()); // include help itself
+    env.add_function("help", create_help_function(function_names));
+    env.add_filter("help", create_help_filter());
+    env.add_test("help", create_help_test());
+
     let hints = TemplateHints::from_environment(&env);
     (env, hints)
 }

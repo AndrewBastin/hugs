@@ -562,8 +562,19 @@ fn extract_template_span(
 /// Format a clean error message from MiniJinja error
 /// Uses detail() for cleaner messages when available
 fn format_template_error_reason(error: &minijinja::Error) -> String {
+    use crate::run::{HELP_MARKER_FILTER, HELP_MARKER_FUNCTION, HELP_MARKER_TEST};
+
     // detail() provides a cleaner message without the full context
     if let Some(detail) = error.detail() {
+        if detail.starts_with(HELP_MARKER_FUNCTION) {
+            return "you asked for help here".to_string();
+        }
+        if detail.starts_with(HELP_MARKER_FILTER) {
+            return "you asked for filter help here".to_string();
+        }
+        if detail.starts_with(HELP_MARKER_TEST) {
+            return "you asked for test help here".to_string();
+        }
         return detail.to_string();
     }
     error.to_string()
@@ -743,11 +754,218 @@ fn extract_identifier(detail: &str) -> Option<&str> {
     None
 }
 
+/// Parse help marker to extract kind and value (value is base64 encoded)
+fn parse_help_value_marker(detail: &str, prefix: &str) -> (String, String) {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    
+    let rest = detail.strip_prefix(prefix).unwrap_or("");
+    let mut kind = String::new();
+    let mut value_b64 = String::new();
+
+    for part in rest.split(':') {
+        if let Some(k) = part.strip_prefix("kind=") {
+            kind = k.to_string();
+        } else if let Some(v) = part.strip_prefix("value=") {
+            value_b64 = v.to_string();
+        }
+    }
+
+    let value = STANDARD
+        .decode(&value_b64)
+        .ok()
+        .and_then(|b| String::from_utf8(b).ok())
+        .unwrap_or_else(|| "?".to_string());
+
+    (kind, value)
+}
+
+/// Parse help function marker to extract variables
+/// A variable with its name and value representation
+struct VariableInfo {
+    name: String,
+    value: String,
+}
+
+fn parse_help_function_marker(detail: &str, prefix: &str) -> Vec<VariableInfo> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    
+    let rest = detail.strip_prefix(prefix).unwrap_or("");
+    
+    // Find "variables=" and take everything after it
+    let vars = if let Some(pos) = rest.find("variables=") {
+        &rest[pos + "variables=".len()..]
+    } else {
+        return Vec::new();
+    };
+    
+    if vars.is_empty() {
+        return Vec::new();
+    }
+    
+    // Parse base64-encoded name:value pairs separated by commas
+    let mut result = Vec::new();
+    for entry in vars.split(',') {
+        if let Some((name_b64, value_b64)) = entry.split_once(':') {
+            let name = STANDARD
+                .decode(name_b64)
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+                .unwrap_or_else(|| "?".to_string());
+            let value = STANDARD
+                .decode(value_b64)
+                .ok()
+                .and_then(|b| String::from_utf8(b).ok())
+                .unwrap_or_else(|| "?".to_string());
+            result.push(VariableInfo { name, value });
+        }
+    }
+    
+    result
+}
+
+/// Wrap a list of items into lines with a maximum character width
+fn wrap_items_to_lines(items: &[String], max_width: usize) -> String {
+    use owo_colors::OwoColorize;
+
+    let mut result = String::new();
+    let mut current_line = String::from("  ");
+    let mut current_len = 2; // Account for leading indent
+
+    for (i, item) in items.iter().enumerate() {
+        let separator = if i > 0 { ", " } else { "" };
+        let addition_len = separator.len() + item.len();
+
+        if current_len + addition_len > max_width && current_len > 2 {
+            result.push_str(&current_line);
+            result.push('\n');
+            current_line = format!("  {}", item.bright_yellow());
+            current_len = 2 + item.len();
+        } else {
+            current_line.push_str(separator);
+            current_line.push_str(&item.bright_yellow().to_string());
+            current_len += addition_len;
+        }
+    }
+
+    if current_len > 2 {
+        result.push_str(&current_line);
+        result.push('\n');
+    }
+
+    result
+}
+
+/// Format help message for the `help()` function - shows everything
+fn format_full_help(context_vars: &[VariableInfo], hints: &TemplateHints) -> String {
+    use owo_colors::OwoColorize;
+
+    let mut help = String::new();
+
+    help.push_str("Variables you can use:\n");
+    if context_vars.is_empty() {
+        help.push_str("  I couldn't find any variables in this context.\n");
+    } else {
+        for var in context_vars {
+            help.push_str(&format!(
+                "  {} = {}\n",
+                var.name.bright_yellow(),
+                var.value.truecolor(255, 165, 0) // Orange
+            ));
+        }
+    }
+
+    help.push_str("\nFunctions you can call:\n");
+    if hints.functions.is_empty() {
+        help.push_str("  No custom functions are available.\n");
+    } else {
+        let funcs: Vec<String> = hints.functions.iter().map(|f| format!("{}()", f)).collect();
+        help.push_str(&wrap_items_to_lines(&funcs, 50));
+    }
+
+    help.push_str("\nFilters you can apply:\n");
+    if hints.filters.is_empty() {
+        help.push_str("  No filters are available.\n");
+    } else {
+        help.push_str(&wrap_items_to_lines(&hints.filters, 50));
+    }
+
+    help.push_str("\nTests you can use:\n");
+    if hints.tests.is_empty() {
+        help.push_str("  No tests are available.\n");
+    } else {
+        help.push_str(&wrap_items_to_lines(&hints.tests, 50));
+    }
+
+    if !hints.macros.is_empty() {
+        help.push_str("\nMacros you've defined:\n");
+        help.push_str(&wrap_items_to_lines(&hints.macros, 50));
+    }
+
+    help
+}
+
+/// Format help message for the `| help` filter - shows value info and filters
+fn format_filter_help(kind: &str, value: &str, hints: &TemplateHints) -> String {
+    use owo_colors::OwoColorize;
+
+    let mut help = format!(
+        "You're filtering a {} with value:\n    {}\n",
+        kind.yellow().bold(),
+        value.bright_yellow()
+    );
+
+    help.push_str("\nFilters you can apply:\n");
+    if hints.filters.is_empty() {
+        help.push_str("  I couldn't find any filters.\n");
+    } else {
+        help.push_str(&wrap_items_to_lines(&hints.filters, 50));
+    }
+
+    help
+}
+
+/// Format help message for the `is help` test - shows value info and tests
+fn format_test_help(kind: &str, value: &str, hints: &TemplateHints) -> String {
+    use owo_colors::OwoColorize;
+
+    let mut help = format!(
+        "You're testing a {} with value:\n    {}\n",
+        kind.yellow().bold(),
+        value.bright_yellow()
+    );
+
+    help.push_str("\nTests you can use:\n");
+    if hints.tests.is_empty() {
+        help.push_str("  I couldn't find any tests.\n");
+    } else {
+        help.push_str(&wrap_items_to_lines(&hints.tests, 50));
+    }
+
+    help
+}
+
 /// Generate contextual help text based on the error kind
 fn template_error_help(error: &minijinja::Error, hints: &TemplateHints) -> String {
+    use crate::run::{HELP_MARKER_FILTER, HELP_MARKER_FUNCTION, HELP_MARKER_TEST};
     use minijinja::ErrorKind;
 
     let detail = error.detail().unwrap_or_default();
+
+    if detail.starts_with(HELP_MARKER_FUNCTION) {
+        let context_vars = parse_help_function_marker(detail, HELP_MARKER_FUNCTION);
+        return format_full_help(&context_vars, hints);
+    }
+
+    if detail.starts_with(HELP_MARKER_FILTER) {
+        let (kind, value) = parse_help_value_marker(detail, HELP_MARKER_FILTER);
+        return format_filter_help(&kind, &value, hints);
+    }
+
+    if detail.starts_with(HELP_MARKER_TEST) {
+        let (kind, value) = parse_help_value_marker(detail, HELP_MARKER_TEST);
+        return format_test_help(&kind, &value, hints);
+    }
+
     let identifier = extract_identifier(detail);
 
     match error.kind() {
