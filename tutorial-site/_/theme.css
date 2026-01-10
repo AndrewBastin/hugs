@@ -178,6 +178,7 @@ hr {
 a {
   text-decoration: none;
   color: #1d7484;
+  border-bottom: 2px solid transparent;
 }
 a:visited {
   color: #144f5a;
