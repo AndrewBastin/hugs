@@ -62,19 +62,19 @@ The `_/theme.css` file uses Hugs-specific attributes to target styling. Here are
 
 **Showing titles only on blog posts:**
 
-Hugs adds an `hg-title` attribute to page titles and an `hg-path` attribute to the body. This site hides titles by default and only shows them on blog posts:
+This site uses a `_/content.md` template to conditionally show titles only on blog posts:
 
-```css
-[hg-title] {
-  display: none;
-}
+{% raw %}
+```jinja
+{% if path_class is startingwith("blog ") %}
+# {{ title }}
+{% endif %}
 
-[hg-path^="blog "] [hg-title] {
-  display: block;
-}
+{{ content }}
 ```
+{% endraw %}
 
-The `hg-path^="blog "` selector matches any path starting with "blog " (note the space - this matches child pages, not just `/blog` itself).
+The `path_class` variable contains a space-separated version of the URL path (e.g., `blog macros` for `/blog/macros`). The `startingwith` test checks if we're on a blog post page (not `/blog` itself, hence the space after "blog").
 
 **Compact list spacing on the blog index:**
 

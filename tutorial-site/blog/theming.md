@@ -13,6 +13,7 @@ _/
 ├── theme.css   → Your site's styles
 ├── header.md   → Content above the nav (logo, site name)
 ├── nav.md      → Navigation links
+├── content.md  → Content area template (optional)
 └── footer.md   → Content at the bottom of every page
 ```
 
@@ -41,6 +42,8 @@ These three markdown files control the persistent elements of your site:
 
 Just write markdown links - they render inline as your navigation menu.
 
+**`_/content.md`** - Controls how the main content area is rendered. This is optional - if not present, Hugs just renders your page content directly. But with it, you can wrap content with custom markup, conditionally show titles, or add consistent elements to all pages.
+
 **`_/footer.md`** - Appears at the bottom of every page:
 
 ```markdown
@@ -51,17 +54,81 @@ Just write markdown links - they render inline as your navigation menu.
 
 All three files support both markdown and HTML. Edit them and see changes on every page instantly.
 
+### The Content Template
+
+The `_/content.md` file deserves special attention. It's a **Jinja template** that controls how your page content is rendered within the `<main>` element.
+
+If you don't have a `_/content.md` file, Hugs defaults to simply rendering:
+
+{% raw %}
+```jinja
+{{ content }}
+```
+{% endraw %}
+
+But you can customize it to add structure around your content. Here's what this tutorial site uses:
+
+{% raw %}
+```jinja
+{% if path_class is startingwith("blog ") %}
+# {{ title }}
+{% endif %}
+
+{{ content }}
+```
+{% endraw %}
+
+This shows the page title as an `<h1>` only on blog posts (pages whose path starts with "blog "), but not on other pages like the homepage or about page.
+
+**Available variables in `_/content.md`:**
+
+- `content` - The rendered HTML content of your page
+- `title` - The page title from frontmatter
+- `path_class` - Space-separated URL path (e.g., `blog macros` for `/blog/macros`)
+- `base` - Base path for relative URLs
+- `seo` - SEO context object with `canonical_url`, `og_title`, etc.
+- All custom frontmatter fields from the page (like `order`, `tags`, etc.)
+
+**Example: Different layouts for different sections**
+
+{% raw %}
+```jinja
+{% if path_class is startingwith("blog ") %}
+<article>
+# {{ title }}
+{{ content }}
+</article>
+{% elif path_class is startingwith("docs ") %}
+<div class="docs-content">
+{{ content }}
+</div>
+{% else %}
+{{ content }}
+{% endif %}
+```
+{% endraw %}
+
+**Example: Add consistent elements to all pages**
+
+{% raw %}
+```jinja
+{{ content }}
+
+---
+*Last updated: {{ date | default("Unknown") }}*
+```
+{% endraw %}
+
 ### The HTML Structure
 
 Every page Hugs generates has the same structure:
 
 ```html
-<body hg-path="blog-my-post">
+<body hg-path="blog my-post">
   <header>...</header>
   <nav>...</nav>
   <main>
-    <h1 hg-title>Page Title</h1>
-    <!-- your content -->
+    <!-- content from _/content.md template -->
   </main>
   <footer>...</footer>
 </body>
@@ -69,13 +136,11 @@ Every page Hugs generates has the same structure:
 
 This gives you clear hooks for styling: `header`, `nav`, `main`, `footer`, and the content within them.
 
-### Hugs-Specific Attributes
+### The `hg-path` Attribute
 
-Hugs adds two special attributes to help with conditional styling:
+Hugs adds the `hg-path` attribute to `<body>`. This is a space-separated version of the page's URL path, so `/blog/my-post` becomes `blog my-post`.
 
-**`hg-path`** - Added to `<body>`, this is a CSS-friendly version of the page's URL path. Slashes become spaces, so `/blog/my-post` becomes `blog my-post`.
-
-**`hg-title`** - Added to the `<h1>` that displays the page title. This lets you style or hide the title on specific pages.
+Why space-separated instead of the actual path? CSS attribute selectors treat spaces as word boundaries. This means you can use `[hg-path~="blog"]` to match any page that has "blog" as a path segment, rather than relying on substring matching which could produce false positives.
 
 ### Conditional Styling with `hg-path`
 
@@ -97,24 +162,6 @@ The `hg-path` attribute enables page-specific styling using CSS attribute select
   color: #1d7484;
 }
 ```
-
-### Controlling the Page Title
-
-By default, Hugs renders your page title as an `<h1>` at the top of the content area. You can control this with the `hg-title` attribute:
-
-```css
-/* Hide title on all pages */
-[hg-title] {
-  display: none;
-}
-
-/* But show it on blog posts */
-[hg-path^="blog "] [hg-title] {
-  display: block;
-}
-```
-
-This is exactly what the default theme does - titles are hidden except on blog posts where they serve as article headers.
 
 ### The Default Theme
 
@@ -244,7 +291,7 @@ code {
 1. Open `_/theme.css` in your editor
 2. Find the `body` rule and change `background-color`
 3. Watch your browser update instantly
-4. Try hiding the title on the homepage: `[hg-path=""] [hg-title] { display: none; }`
+4. Try adding a custom `_/content.md` that wraps your content in an `<article>` tag
 
 ---
 

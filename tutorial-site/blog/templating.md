@@ -28,6 +28,8 @@ Every page has access to these built-in variables:
 
 For dynamic pages (files like `[slug].md`), you also get the dynamic parameter as a variable. See [Dynamic Page Paths](/blog/dynamic-paths) for details.
 
+The `_/content.md` template has access to these same variables, plus a special `content` variable containing the rendered HTML of your page. See [Theming & CSS](/blog/theming#the-content-template) for details.
+
 ### The `pages()` Function
 
 The `pages()` function returns **all pages** on your site, each with:

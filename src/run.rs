@@ -360,6 +360,9 @@ pub struct AppData {
 
     /// Pre-built template containing all macro definitions from _/macros/
     pub macros_template: String,
+
+    /// Content template from _/content.md (defaults to "{{ content }}")
+    pub content_template: String,
 }
 
 impl AppData {
@@ -416,11 +419,20 @@ impl AppData {
         let footer_path = site_path.join("_/footer.md");
         let nav_path = site_path.join("_/nav.md");
         let theme_path = site_path.join("_/theme.css");
+        let content_template_path = site_path.join("_/content.md");
 
         let header_md = read_required_file(&header_path, "header", "_/header.md").await?;
         let footer_md = read_required_file(&footer_path, "footer", "_/footer.md").await?;
         let nav_md = read_required_file(&nav_path, "navigation", "_/nav.md").await?;
         let theme_css = read_required_file(&theme_path, "theme stylesheet", "_/theme.css").await?;
+        let content_template = if content_template_path.exists() {
+            tokio::fs::read_to_string(&content_template_path).await.map_err(|e| HugsError::FileRead {
+                path: content_template_path.clone().into(),
+                cause: e,
+            })?
+        } else {
+            String::from("{{ content }}")
+        };
         let config = SiteConfig::load(&site_path).await?;
 
         // Initialize syntax highlighting registry and generate CSS
@@ -454,6 +466,7 @@ impl AppData {
             footer: "",
             nav: "",
             content: "",
+            main_content: "",
             path_class: "",
             base: "/",
             dev_script: "",
@@ -485,6 +498,7 @@ impl AppData {
             cache_bust_registry: CacheBustRegistry::new(),
             highlight_css,
             macros_template,
+            content_template,
         })
     }
 }
@@ -1133,6 +1147,7 @@ pub struct PageContent<'a> {
     pub footer: &'a str,
     pub nav: &'a str,
     pub content: &'a str,
+    pub main_content: &'a str,
     pub path_class: &'a str,
     pub base: &'a str,
     pub dev_script: &'a str,
@@ -1140,7 +1155,9 @@ pub struct PageContent<'a> {
     pub syntax_highlighting_enabled: bool,
 }
 
-/// Resolve a URL path to a document, returning the frontmatter, HTML content, and file path.
+
+
+/// Resolve a URL path to a document, returning the frontmatter, HTML content, file path, and raw frontmatter JSON.
 ///
 /// Returns:
 /// - `Ok(Some(...))` if the page was found and rendered successfully
@@ -1149,7 +1166,7 @@ pub struct PageContent<'a> {
 pub async fn resolve_path_to_doc(
     path: &str,
     app_data: &AppData,
-) -> Result<Option<(ContentFrontmatter, String, PathBuf)>> {
+) -> Result<Option<(ContentFrontmatter, String, PathBuf, serde_json::Value)>> {
     let resolvable_path = {
         let check_path = if path.is_empty() { "index" } else { path };
 
@@ -1192,6 +1209,7 @@ pub async fn resolve_path_to_doc(
         footer: &app_data.footer_html,
         nav: &app_data.nav_html,
         content: "",
+        main_content: "",
         path_class: &path_class,
         base: "/",
         dev_script: "",
@@ -1211,8 +1229,6 @@ pub async fn resolve_path_to_doc(
 
     let (frontmatter, body) =
         markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content).map_err(|e| {
-            // The frontmatter parsing error from the library doesn't give us good location info,
-            // but we can try to extract what we can
             HugsError::FrontmatterParse {
                 file: relative_path_str.clone().into(),
                 src: miette::NamedSource::new(relative_path_str.clone(), doc_content.clone()),
@@ -1224,13 +1240,24 @@ pub async fn resolve_path_to_doc(
             }
         })?;
 
+    let (raw_frontmatter, _) =
+        markdown_frontmatter::parse::<YamlValue>(&doc_content).map_err(|e| {
+            HugsError::FrontmatterParse {
+                file: relative_path_str.clone().into(),
+                src: miette::NamedSource::new(relative_path_str.clone(), doc_content.clone()),
+                span: miette::SourceSpan::from((0_usize, 1_usize)),
+                reason: format!("Failed to parse frontmatter as YAML: {}", e),
+            }
+        })?;
+    let frontmatter_json = yaml_to_json_value(&raw_frontmatter);
+
     let doc_html = markdown_to_html(body, &app_data.config.build.syntax_highlighting)
         .map_err(|reason| HugsError::MarkdownParse {
             file: relative_path_str.into(),
             reason,
         })?;
 
-    Ok(Some((frontmatter, doc_html, resolvable_path)))
+    Ok(Some((frontmatter, doc_html, resolvable_path, frontmatter_json)))
 }
 
 /// Resolve a dynamic page from its source file path with dynamic context.
@@ -1241,7 +1268,7 @@ pub async fn resolve_dynamic_doc(
     source_file_path: &str,
     dynamic_ctx: &DynamicContext,
     app_data: &AppData,
-) -> Result<(ContentFrontmatter, String, PathBuf)> {
+) -> Result<(ContentFrontmatter, String, PathBuf, serde_json::Value)> {
     let resolvable_path = app_data.site_path.join(source_file_path);
 
     let relative_path_str = source_file_path.to_string();
@@ -1264,6 +1291,7 @@ pub async fn resolve_dynamic_doc(
         footer: &app_data.footer_html,
         nav: &app_data.nav_html,
         content: "",
+        main_content: "",
         path_class: &path_class,
         base: "/",
         dev_script: "",
@@ -1305,13 +1333,24 @@ pub async fn resolve_dynamic_doc(
             }
         })?;
 
+    let (raw_frontmatter, _) =
+        markdown_frontmatter::parse::<YamlValue>(&doc_content).map_err(|e| {
+            HugsError::FrontmatterParse {
+                file: relative_path_str.clone().into(),
+                src: miette::NamedSource::new(relative_path_str.clone(), doc_content.clone()),
+                span: miette::SourceSpan::from((0_usize, 1_usize)),
+                reason: format!("Failed to parse frontmatter as YAML: {}", e),
+            }
+        })?;
+    let frontmatter_json = yaml_to_json_value(&raw_frontmatter);
+
     let doc_html = markdown_to_html(body, &app_data.config.build.syntax_highlighting)
         .map_err(|reason| HugsError::MarkdownParse {
             file: relative_path_str.into(),
             reason,
         })?;
 
-    Ok((frontmatter, doc_html, resolvable_path))
+    Ok((frontmatter, doc_html, resolvable_path, frontmatter_json))
 }
 
 pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Option<String> {
@@ -1325,6 +1364,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
         footer: &app_data.footer_html,
         nav: &app_data.nav_html,
         content: "",
+        main_content: "",
         path_class: "notfound",
         base: "/",
         dev_script: "",
@@ -1335,16 +1375,43 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
     let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None, &app_data.macros_template).ok()?;
 
     let (frontmatter, body) = markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content).ok()?;
+    let (raw_frontmatter, _) = markdown_frontmatter::parse::<YamlValue>(&doc_content).ok()?;
+    let frontmatter_json = yaml_to_json_value(&raw_frontmatter);
 
     let doc_html = markdown_to_html(body, &app_data.config.build.syntax_highlighting).ok()?;
 
     let seo = build_seo_context(&frontmatter, "/404", &app_data.config.site);
+
+    let mut content_ctx = if let serde_json::Value::Object(map) = &frontmatter_json {
+        serde_json::Value::Object(map.clone())
+    } else {
+        serde_json::Value::Object(serde_json::Map::new())
+    };
+
+    if let serde_json::Value::Object(ref mut map) = content_ctx {
+        map.insert("content".to_string(), serde_json::Value::String(doc_html.clone()));
+        map.insert("path_class".to_string(), serde_json::Value::String("notfound".to_string()));
+        map.insert("base".to_string(), serde_json::Value::String("/".to_string()));
+        map.insert("seo".to_string(), serde_json::to_value(&seo).unwrap_or(serde_json::Value::Null));
+    }
+
+    let content_template_rendered = render_template(
+        &app_data.content_template,
+        &content_ctx,
+        &app_data.pages,
+        None,
+        &app_data.macros_template,
+    ).ok()?;
+
+    let main_content_html = markdown::to_html_with_options(&content_template_rendered, &markdown_options()).ok()?;
+
     let content = PageContent {
         title: &frontmatter.title,
         header: &app_data.header_html,
         footer: &app_data.footer_html,
         nav: &app_data.nav_html,
         content: &doc_html,
+        main_content: &main_content_html,
         path_class: "notfound",
         base: "/",
         dev_script,
@@ -1448,6 +1515,7 @@ pub fn convert_path_to_class(path: &PathBuf, app_data: &AppData) -> Result<Strin
 /// Helper function to render a page to HTML
 pub fn render_page_html(
     frontmatter: &ContentFrontmatter,
+    frontmatter_json: &serde_json::Value,
     doc_html: &str,
     resolvable_path: &PathBuf,
     app_data: &AppData,
@@ -1461,12 +1529,13 @@ pub fn render_page_html(
             .unwrap_or(resolvable_path),
     );
 
-    render_page_html_internal(frontmatter, doc_html, &page_url, &path_class, &base, app_data, dev_script)
+    render_page_html_internal(frontmatter, frontmatter_json, doc_html, &page_url, &path_class, &base, app_data, dev_script)
 }
 
 /// Render a dynamic page to HTML with explicit URL (for proper SEO and path_class)
 pub fn render_dynamic_page_html(
     frontmatter: &ContentFrontmatter,
+    frontmatter_json: &serde_json::Value,
     doc_html: &str,
     page_url: &str,
     app_data: &AppData,
@@ -1493,12 +1562,13 @@ pub fn render_dynamic_page_html(
         url_path.replace('/', " ")
     };
 
-    render_page_html_internal(frontmatter, doc_html, page_url, &path_class, &base, app_data, dev_script)
+    render_page_html_internal(frontmatter, frontmatter_json, doc_html, page_url, &path_class, &base, app_data, dev_script)
 }
 
 /// Internal helper for rendering page HTML
 fn render_page_html_internal(
     frontmatter: &ContentFrontmatter,
+    frontmatter_json: &serde_json::Value,
     doc_html: &str,
     page_url: &str,
     path_class: &str,
@@ -1508,12 +1578,48 @@ fn render_page_html_internal(
 ) -> Result<String> {
     let seo = build_seo_context(frontmatter, page_url, &app_data.config.site);
 
+    let mut content_ctx = if let serde_json::Value::Object(map) = frontmatter_json {
+        serde_json::Value::Object(map.clone())
+    } else {
+        serde_json::Value::Object(serde_json::Map::new())
+    };
+
+    if let serde_json::Value::Object(ref mut map) = content_ctx {
+        map.insert("content".to_string(), serde_json::Value::String(doc_html.to_string()));
+        map.insert("path_class".to_string(), serde_json::Value::String(path_class.to_string()));
+        map.insert("base".to_string(), serde_json::Value::String(base.to_string()));
+        map.insert("seo".to_string(), serde_json::to_value(&seo).unwrap_or(serde_json::Value::Null));
+    }
+
+    let content_template_rendered = render_template(
+        &app_data.content_template,
+        &content_ctx,
+        &app_data.pages,
+        None,
+        &app_data.macros_template,
+    )
+    .map_err(|e| HugsError::template_render_named(
+        "_/content.md",
+        &app_data.content_template,
+        &e.error,
+        &e.hints,
+        e.macro_prefix_bytes,
+        e.macro_prefix_lines,
+    ))?;
+
+    let main_content_html = markdown::to_html_with_options(&content_template_rendered, &markdown_options())
+        .map_err(|e| HugsError::MarkdownParse {
+            file: "_/content.md".into(),
+            reason: e.to_string(),
+        })?;
+
     let content = PageContent {
         title: &frontmatter.title,
         header: &app_data.header_html,
         footer: &app_data.footer_html,
         nav: &app_data.nav_html,
         content: doc_html,
+        main_content: &main_content_html,
         path_class,
         base,
         dev_script,

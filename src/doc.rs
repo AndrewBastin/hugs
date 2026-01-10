@@ -62,9 +62,10 @@ async fn page(path: web::Path<String>, state: web::Data<Arc<DocAppState>>) -> Ht
     }
 
     match resolve_path_to_doc(path_str, &state.app_data).await {
-        Ok(Some((frontmatter, doc_html, resolvable_path))) => {
+        Ok(Some((frontmatter, doc_html, resolvable_path, frontmatter_json))) => {
             match render_page_html(
                 &frontmatter,
+                &frontmatter_json,
                 &doc_html,
                 &resolvable_path,
                 &state.app_data,

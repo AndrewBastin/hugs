@@ -144,21 +144,21 @@ async fn render_all_pages(
             // Resolve the page and render - use appropriate method for dynamic vs static pages
             let html_out = if let Some(ctx) = &dynamic_ctx {
                 // Dynamic page: resolve from source file with context
-                let (frontmatter, doc_html, _resolvable_path) =
+                let (frontmatter, doc_html, _resolvable_path, frontmatter_json) =
                     resolve_dynamic_doc(&file_path, ctx, &app_data).await?;
                 // Use the resolved URL (e.g., /docs/2) for proper SEO
-                render_dynamic_page_html(&frontmatter, &doc_html, &url, &app_data, "")?
+                render_dynamic_page_html(&frontmatter, &frontmatter_json, &doc_html, &url, &app_data, "")?
             } else {
                 // Static page: resolve from URL path
                 let request_path = url.trim_start_matches('/');
-                let (frontmatter, doc_html, resolvable_path) =
+                let (frontmatter, doc_html, resolvable_path, frontmatter_json) =
                     resolve_path_to_doc(request_path, &app_data)
                         .await?
                         .ok_or_else(|| HugsError::PageResolve {
                             url: url.clone().into(),
                             file_path: file_path.clone().into(),
                         })?;
-                render_page_html(&frontmatter, &doc_html, &resolvable_path, &app_data, "")?
+                render_page_html(&frontmatter, &frontmatter_json, &doc_html, &resolvable_path, &app_data, "")?
             };
 
             // Apply minification if enabled

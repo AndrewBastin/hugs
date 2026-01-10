@@ -17,22 +17,6 @@
 
 
 
-/* 
- * I will always try to render out the title of the rendered page on the content area.
- * When I render that, I will be marking that title with an `hg-title` attribute.
- *
- * In this site, I am configuring it so that only blog post pages will have a title.
- * To do that, I am using the `hg-path` attribute I place on the `body` tag as an
- * identifier to place my styling against.
- */
-[hg-title] {
-  display: none;
-}
-
-[hg-path^="blog "] [hg-title] {
-  display: block;
-}
-
 /*
  * I'm making the post list on the blog index page more compact here.
  *
