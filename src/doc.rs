@@ -106,7 +106,7 @@ pub async fn run_doc_server(port: Option<u16>, no_open: bool) -> Result<()> {
     console::status("Extracted", docs_path.display());
 
     // Load site data
-    let app_data = AppData::load(docs_path).await?;
+    let app_data = AppData::load(docs_path, "doc").await?;
     let minify_config = MinifyConfig::new(app_data.config.build.minify);
 
     let state = Arc::new(DocAppState {

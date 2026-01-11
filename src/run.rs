@@ -584,17 +584,15 @@ async fn read_required_file(
 }
 
 impl AppData {
-    pub async fn load(site_path: PathBuf) -> Result<AppData> {
+    pub async fn load(site_path: PathBuf, command: &str) -> Result<AppData> {
         // Check if this looks like a valid Hugs site
         let underscore_dir = site_path.join("_");
         if !site_path.is_dir() || !underscore_dir.is_dir() {
             // Use a friendlier error message when running in the current directory
             if site_path.as_os_str() == "." {
-                return Err(HugsError::SiteNotFoundCwd);
+                return Err(HugsError::site_not_found_cwd(command));
             }
-            return Err(HugsError::SiteNotFound {
-                path: (&site_path).into(),
-            });
+            return Err(HugsError::site_not_found(&site_path));
         }
 
         let header_path = site_path.join("_/header.md");

@@ -156,18 +156,19 @@ pub enum HugsError {
 
     // === File Errors ===
     #[error("I couldn't find a Hugs site at {path}")]
-    #[diagnostic(
-        code(hugs::site::not_found),
-        help("Make sure the path points to a valid Hugs site directory. A Hugs site should contain:\n\n  <site>/\n    _/\n      header.md\n      footer.md\n      nav.md\n      theme.css\n    index.md\n    config.toml")
-    )]
-    SiteNotFound { path: StyledPath },
+    #[diagnostic(code(hugs::site::not_found))]
+    SiteNotFound {
+        path: StyledPath,
+        #[help]
+        help_text: String,
+    },
 
     #[error("I couldn't find a Hugs site in the current directory")]
-    #[diagnostic(
-        code(hugs::site::not_found_cwd),
-        help("Make sure you're in a Hugs site directory, or specify a path:\n\n    hugs dev <path>\n    hugs build <path>\n\nA Hugs site should contain:\n\n  <site>/\n    _/\n      header.md\n      footer.md\n      nav.md\n      theme.css\n    index.md\n    config.toml")
-    )]
-    SiteNotFoundCwd,
+    #[diagnostic(code(hugs::site::not_found_cwd))]
+    SiteNotFoundCwd {
+        #[help]
+        help_text: String,
+    },
 
     #[error("I couldn't find the file at {path}")]
     #[diagnostic(
@@ -418,6 +419,54 @@ pub enum HugsError {
 pub type Result<T> = std::result::Result<T, HugsError>;
 
 impl HugsError {
+    /// Create a site not found error for a specific path
+    pub fn site_not_found(path: &Path) -> Self {
+        use owo_colors::OwoColorize;
+
+        let help_text = format!(
+            "Make sure the path points to a valid Hugs site directory. A Hugs site should contain:\n\n  \
+            <site>/\n    \
+            _/\n      \
+            header.md\n      \
+            footer.md\n      \
+            nav.md\n      \
+            theme.css\n    \
+            index.md\n    \
+            config.toml\n\n\
+            If you intended to create a new site, run:\n\n    {}",
+            "hugs new <path>".cyan()
+        );
+
+        HugsError::SiteNotFound {
+            path: StyledPath::from(path),
+            help_text,
+        }
+    }
+
+    /// Create a site not found error for the current directory
+    pub fn site_not_found_cwd(command: &str) -> Self {
+        use owo_colors::OwoColorize;
+
+        let help_text = format!(
+            "Make sure you're in a Hugs site directory, or specify a path:\n\n    \
+            hugs {} <path>\n\n\
+            If you intended to create a new site, run:\n\n    {}\n\n\
+            A Hugs site should contain:\n\n  \
+            <site>/\n    \
+            _/\n      \
+            header.md\n      \
+            footer.md\n      \
+            nav.md\n      \
+            theme.css\n    \
+            index.md\n    \
+            config.toml",
+            command,
+            "hugs new".cyan()
+        );
+
+        HugsError::SiteNotFoundCwd { help_text }
+    }
+
     /// Create a config parse error with source span from a TOML error
     pub fn config_parse(path: &Path, content: &str, error: toml::de::Error) -> Self {
         let span = error
@@ -1285,8 +1334,13 @@ impl Clone for HugsError {
             HugsError::TemplateContext { reason } => {
                 HugsError::TemplateContext { reason: reason.clone() }
             }
-            HugsError::SiteNotFound { path } => HugsError::SiteNotFound { path: path.clone() },
-            HugsError::SiteNotFoundCwd => HugsError::SiteNotFoundCwd,
+            HugsError::SiteNotFound { path, help_text } => HugsError::SiteNotFound {
+                path: path.clone(),
+                help_text: help_text.clone(),
+            },
+            HugsError::SiteNotFoundCwd { help_text } => HugsError::SiteNotFoundCwd {
+                help_text: help_text.clone(),
+            },
             HugsError::FileNotFound { path } => HugsError::FileNotFound { path: path.clone() },
             HugsError::FileRead { path, cause } => HugsError::FileRead {
                 path: path.clone(),

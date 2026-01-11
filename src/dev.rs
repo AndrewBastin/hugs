@@ -401,7 +401,7 @@ fn start_file_watcher(
 
             console::status_cyan("Watching", "file change detected, reloading...");
 
-            match AppData::load(site_path_clone.clone()).await {
+            match AppData::load(site_path_clone.clone(), "dev").await {
                 Ok(new_data) => {
                     let mut app_data = state.app_data.write().await;
                     *app_data = new_data;
@@ -424,7 +424,7 @@ pub async fn run_dev_server(path: PathBuf, port: u16, port_explicit: bool) -> Re
     console::status("Starting", "development server with live reload");
     console::status("Watching", path.display());
 
-    let app_data = AppData::load(path.clone()).await?;
+    let app_data = AppData::load(path.clone(), "dev").await?;
 
     let (reload_tx, _) = broadcast::channel(16);
     let minify_config = MinifyConfig::new(app_data.config.build.minify);

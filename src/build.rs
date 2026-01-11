@@ -55,7 +55,7 @@ pub async fn run_build(site_path: PathBuf, output_path: PathBuf) -> Result<()> {
     let mut warnings = BuildWarnings::default();
 
     // Load site data (wrapped in Arc for parallel rendering)
-    let app_data = Arc::new(AppData::load(site_path).await?);
+    let app_data = Arc::new(AppData::load(site_path, "build").await?);
     let minify_config = MinifyConfig::new(app_data.config.build.minify);
 
     // Clean/create output directory
