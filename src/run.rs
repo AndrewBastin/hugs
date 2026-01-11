@@ -1417,6 +1417,32 @@ pub async fn resolve_path_to_doc(
 
     let path_class = convert_path_to_class(&resolvable_path, app_data)?;
 
+    // Parse frontmatter FIRST from raw content so it's available to the page body
+    let (frontmatter, raw_body) =
+        markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content_jinja).map_err(|e| {
+            HugsError::FrontmatterParse {
+                file: relative_path_str.clone().into(),
+                src: miette::NamedSource::new(relative_path_str.clone(), doc_content_jinja.clone()),
+                span: miette::SourceSpan::from((0_usize, 1_usize)),
+                reason: format!(
+                    "I couldn't parse the frontmatter. Make sure you have a valid `title` field. Error: {}",
+                    e
+                ),
+            }
+        })?;
+
+    let (raw_frontmatter, _) =
+        markdown_frontmatter::parse::<YamlValue>(&doc_content_jinja).map_err(|e| {
+            HugsError::FrontmatterParse {
+                file: relative_path_str.clone().into(),
+                src: miette::NamedSource::new(relative_path_str.clone(), doc_content_jinja.clone()),
+                span: miette::SourceSpan::from((0_usize, 1_usize)),
+                reason: format!("Failed to parse frontmatter as YAML: {}", e),
+            }
+        })?;
+    let frontmatter_json = yaml_to_json_value(&raw_frontmatter);
+
+    // Create merged context: PageContent fields + frontmatter fields
     let initial_page_content = PageContent {
         title: "",
         header: &app_data.header_html,
@@ -1431,41 +1457,29 @@ pub async fn resolve_path_to_doc(
         syntax_highlighting_enabled: false,
     };
 
-    let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed)
+    let mut context = serde_json::to_value(&initial_page_content).map_err(|e| HugsError::TemplateContext {
+        reason: e.to_string(),
+    })?;
+
+    // Merge frontmatter into context so page body can access its own frontmatter
+    if let (serde_json::Value::Object(ctx_map), serde_json::Value::Object(fm_map)) = (&mut context, &frontmatter_json) {
+        for (key, value) in fm_map {
+            ctx_map.insert(key.clone(), value.clone());
+        }
+    }
+
+    // Render only the body (not frontmatter) with the merged context
+    let body = render_template(raw_body, &context, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed)
         .map_err(|e| HugsError::template_render(
             &resolvable_path,
-            &doc_content_jinja,
+            raw_body,
             e.error,
             &e.hints,
             e.macro_prefix_bytes,
             e.macro_prefix_lines,
         ))?;
 
-    let (frontmatter, body) =
-        markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content).map_err(|e| {
-            HugsError::FrontmatterParse {
-                file: relative_path_str.clone().into(),
-                src: miette::NamedSource::new(relative_path_str.clone(), doc_content.clone()),
-                span: miette::SourceSpan::from((0_usize, 1_usize)),
-                reason: format!(
-                    "I couldn't parse the frontmatter. Make sure you have a valid `title` field. Error: {}",
-                    e
-                ),
-            }
-        })?;
-
-    let (raw_frontmatter, _) =
-        markdown_frontmatter::parse::<YamlValue>(&doc_content).map_err(|e| {
-            HugsError::FrontmatterParse {
-                file: relative_path_str.clone().into(),
-                src: miette::NamedSource::new(relative_path_str.clone(), doc_content.clone()),
-                span: miette::SourceSpan::from((0_usize, 1_usize)),
-                reason: format!("Failed to parse frontmatter as YAML: {}", e),
-            }
-        })?;
-    let frontmatter_json = yaml_to_json_value(&raw_frontmatter);
-
-    let doc_html = markdown_to_html(body, &app_data.config.build.syntax_highlighting)
+    let doc_html = markdown_to_html(&body, &app_data.config.build.syntax_highlighting)
         .map_err(|reason| HugsError::MarkdownParse {
             file: relative_path_str.into(),
             reason,
@@ -1499,6 +1513,32 @@ pub async fn resolve_dynamic_doc(
         .replace(&format!("[{}]", dynamic_ctx.param_name), &value_str)
         .replace('/', " ");
 
+    // Parse frontmatter FIRST from raw content so it's available to the page body
+    let (frontmatter, raw_body) =
+        markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content_jinja).map_err(|e| {
+            HugsError::FrontmatterParse {
+                file: relative_path_str.clone().into(),
+                src: miette::NamedSource::new(relative_path_str.clone(), doc_content_jinja.clone()),
+                span: miette::SourceSpan::from((0_usize, 1_usize)),
+                reason: format!(
+                    "I couldn't parse the frontmatter. Make sure you have a valid `title` field. Error: {}",
+                    e
+                ),
+            }
+        })?;
+
+    let (raw_frontmatter, _) =
+        markdown_frontmatter::parse::<YamlValue>(&doc_content_jinja).map_err(|e| {
+            HugsError::FrontmatterParse {
+                file: relative_path_str.clone().into(),
+                src: miette::NamedSource::new(relative_path_str.clone(), doc_content_jinja.clone()),
+                span: miette::SourceSpan::from((0_usize, 1_usize)),
+                reason: format!("Failed to parse frontmatter as YAML: {}", e),
+            }
+        })?;
+    let frontmatter_json = yaml_to_json_value(&raw_frontmatter);
+
+    // Create merged context: PageContent fields + frontmatter fields + dynamic parameter
     let initial_page_content = PageContent {
         title: "",
         header: &app_data.header_html,
@@ -1513,10 +1553,16 @@ pub async fn resolve_dynamic_doc(
         syntax_highlighting_enabled: false,
     };
 
-    // Create a merged context with the dynamic parameter
     let mut context = serde_json::to_value(&initial_page_content).map_err(|e| HugsError::TemplateContext {
         reason: e.to_string(),
     })?;
+
+    // Merge frontmatter into context so page body can access its own frontmatter
+    if let (serde_json::Value::Object(ctx_map), serde_json::Value::Object(fm_map)) = (&mut context, &frontmatter_json) {
+        for (key, value) in fm_map {
+            ctx_map.insert(key.clone(), value.clone());
+        }
+    }
 
     // Inject the dynamic parameter (e.g., `slug` = "hello")
     let (param_name, param_value) = dynamic_ctx.to_json_pair();
@@ -1524,41 +1570,18 @@ pub async fn resolve_dynamic_doc(
         map.insert(param_name, param_value);
     }
 
-    let doc_content = render_template(&doc_content_jinja, context, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed)
+    // Render only the body (not frontmatter) with the merged context
+    let body = render_template(raw_body, &context, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed)
         .map_err(|e| HugsError::template_render(
             &resolvable_path,
-            &doc_content_jinja,
+            raw_body,
             e.error,
             &e.hints,
             e.macro_prefix_bytes,
             e.macro_prefix_lines,
         ))?;
 
-    let (frontmatter, body) =
-        markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content).map_err(|e| {
-            HugsError::FrontmatterParse {
-                file: relative_path_str.clone().into(),
-                src: miette::NamedSource::new(relative_path_str.clone(), doc_content.clone()),
-                span: miette::SourceSpan::from((0_usize, 1_usize)),
-                reason: format!(
-                    "I couldn't parse the frontmatter. Make sure you have a valid `title` field. Error: {}",
-                    e
-                ),
-            }
-        })?;
-
-    let (raw_frontmatter, _) =
-        markdown_frontmatter::parse::<YamlValue>(&doc_content).map_err(|e| {
-            HugsError::FrontmatterParse {
-                file: relative_path_str.clone().into(),
-                src: miette::NamedSource::new(relative_path_str.clone(), doc_content.clone()),
-                span: miette::SourceSpan::from((0_usize, 1_usize)),
-                reason: format!("Failed to parse frontmatter as YAML: {}", e),
-            }
-        })?;
-    let frontmatter_json = yaml_to_json_value(&raw_frontmatter);
-
-    let doc_html = markdown_to_html(body, &app_data.config.build.syntax_highlighting)
+    let doc_html = markdown_to_html(&body, &app_data.config.build.syntax_highlighting)
         .map_err(|reason| HugsError::MarkdownParse {
             file: relative_path_str.into(),
             reason,
@@ -1572,6 +1595,12 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
 
     let doc_content_jinja = tokio::fs::read_to_string(notfound_path).await.ok()?;
 
+    // Parse frontmatter FIRST from raw content so it's available to the page body
+    let (frontmatter, raw_body) = markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content_jinja).ok()?;
+    let (raw_frontmatter, _) = markdown_frontmatter::parse::<YamlValue>(&doc_content_jinja).ok()?;
+    let frontmatter_json = yaml_to_json_value(&raw_frontmatter);
+
+    // Create merged context: PageContent fields + frontmatter fields
     let initial_page_content = PageContent {
         title: "",
         header: &app_data.header_html,
@@ -1586,13 +1615,19 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
         syntax_highlighting_enabled: false,
     };
 
-    let doc_content = render_template(&doc_content_jinja, &initial_page_content, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed).ok()?;
+    let mut context = serde_json::to_value(&initial_page_content).ok()?;
 
-    let (frontmatter, body) = markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content).ok()?;
-    let (raw_frontmatter, _) = markdown_frontmatter::parse::<YamlValue>(&doc_content).ok()?;
-    let frontmatter_json = yaml_to_json_value(&raw_frontmatter);
+    // Merge frontmatter into context so page body can access its own frontmatter
+    if let (serde_json::Value::Object(ctx_map), serde_json::Value::Object(fm_map)) = (&mut context, &frontmatter_json) {
+        for (key, value) in fm_map {
+            ctx_map.insert(key.clone(), value.clone());
+        }
+    }
 
-    let doc_html = markdown_to_html(body, &app_data.config.build.syntax_highlighting).ok()?;
+    // Render only the body (not frontmatter) with the merged context
+    let body = render_template(raw_body, &context, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed).ok()?;
+
+    let doc_html = markdown_to_html(&body, &app_data.config.build.syntax_highlighting).ok()?;
 
     let seo = build_seo_context(&frontmatter, "/404", &app_data.config.site);
     let rendered_title = render_title_template(&frontmatter.title, &app_data.config.site);
