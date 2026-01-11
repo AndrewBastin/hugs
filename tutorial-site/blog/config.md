@@ -40,16 +40,59 @@ Each of these values gets used when building your site:
 
 There are a few more fields you can add to the `[site]` section:
 
+{% raw %}
 ```toml
 [site]
 title = "My Hugs Site"
 description = "A site built with Hugs"
 url = "https://example.com"
 author = "Your Name"
-language = "en-us"           # Language code (default: "en-us")
-twitter_handle = "@yourname" # For Twitter/X cards
-default_image = "/og.png"    # Default image for social sharing
+language = "en-us"                              # Language code (default: "en-us")
+twitter_handle = "@yourname"                    # For Twitter/X cards
+default_image = "/og.png"                       # Default image for social sharing
+title_template = "{{ title }} | {{ site.title }}" # Template for page titles
 ```
+{% endraw %}
+
+### Title Templates
+
+By default, page titles are exactly what you put in the frontmatter. But often you want titles like "About | My Site" instead of just "About".
+
+The `title_template` field lets you customize how titles are formatted:
+
+{% raw %}
+```toml
+[site]
+title = "My Site"
+title_template = "{{ title }} | {{ site.title }}"
+```
+{% endraw %}
+
+With this config, a page with `title: About` will display as "About | My Site" in:
+- The browser tab (`<title>` tag)
+- Social sharing cards (`og:title` and `twitter:title`)
+
+Two variables are available in your template:
+- **`title`** - The page's title from its frontmatter
+- **`site.title`** - Your site's title from config.toml
+
+Some example templates:
+
+{% raw %}
+```toml
+# Site name after (most common)
+title_template = "{{ title }} | {{ site.title }}"
+# Result: "About | My Site"
+
+# Site name before
+title_template = "{{ site.title }} - {{ title }}"
+# Result: "My Site - About"
+
+# Just the page title (same as no template)
+title_template = "{{ title }}"
+# Result: "About"
+```
+{% endraw %}
 
 ### Build Settings
 

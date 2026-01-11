@@ -712,6 +712,37 @@ pub struct SeoContext {
     pub twitter_handle: Option<String>,
 }
 
+/// Render a page title using the site's title template, if configured.
+/// Returns the original title if no template is set or if rendering fails.
+fn render_title_template(
+    page_title: &str,
+    site: &crate::config::SiteMetadata,
+) -> String {
+    match &site.title_template {
+        Some(template) => {
+            let mut env = Environment::new();
+            if let Err(_) = env.add_template("title", template) {
+                return page_title.to_string();
+            }
+
+            let tmpl = match env.get_template("title") {
+                Ok(t) => t,
+                Err(_) => return page_title.to_string(),
+            };
+
+            let ctx = minijinja::context! {
+                title => page_title,
+                site => minijinja::context! {
+                    title => site.title.as_deref().unwrap_or("")
+                }
+            };
+
+            tmpl.render(ctx).unwrap_or_else(|_| page_title.to_string())
+        }
+        None => page_title.to_string(),
+    }
+}
+
 pub fn build_seo_context(
     frontmatter: &ContentFrontmatter,
     page_url: &str,
@@ -746,18 +777,20 @@ pub fn build_seo_context(
         "summary".to_string()
     };
 
+    let rendered_title = render_title_template(&frontmatter.title, site);
+
     SeoContext {
         description: description.clone(),
         author,
         canonical_url: canonical_url.clone(),
-        og_title: frontmatter.title.clone(),
+        og_title: rendered_title.clone(),
         og_description: description.clone(),
         og_url: canonical_url,
         og_type: "website".to_string(),
         og_image: image.clone(),
         og_site_name: site.title.clone(),
         twitter_card,
-        twitter_title: frontmatter.title.clone(),
+        twitter_title: rendered_title,
         twitter_description: description,
         twitter_image: image,
         twitter_handle: site.twitter_handle.clone(),
@@ -1564,6 +1597,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
     let doc_html = markdown_to_html(body, &app_data.config.build.syntax_highlighting).ok()?;
 
     let seo = build_seo_context(&frontmatter, "/404", &app_data.config.site);
+    let rendered_title = render_title_template(&frontmatter.title, &app_data.config.site);
 
     let mut content_ctx = if let serde_json::Value::Object(map) = &frontmatter_json {
         serde_json::Value::Object(map.clone())
@@ -1590,7 +1624,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
     let main_content_html = markdown::to_html_with_options(&content_template_rendered, &markdown_options()).ok()?;
 
     let content = PageContent {
-        title: &frontmatter.title,
+        title: &rendered_title,
         header: &app_data.header_html,
         footer: &app_data.footer_html,
         nav: &app_data.nav_html,
@@ -1761,6 +1795,7 @@ fn render_page_html_internal(
     dev_script: &str,
 ) -> Result<String> {
     let seo = build_seo_context(frontmatter, page_url, &app_data.config.site);
+    let rendered_title = render_title_template(&frontmatter.title, &app_data.config.site);
 
     let mut content_ctx = if let serde_json::Value::Object(map) = frontmatter_json {
         serde_json::Value::Object(map.clone())
@@ -1799,7 +1834,7 @@ fn render_page_html_internal(
         })?;
 
     let content = PageContent {
-        title: &frontmatter.title,
+        title: &rendered_title,
         header: &app_data.header_html,
         footer: &app_data.footer_html,
         nav: &app_data.nav_html,

@@ -81,6 +81,8 @@ pub struct SiteMetadata {
     pub language: String,
     pub twitter_handle: Option<String>,
     pub default_image: Option<String>,
+    /// Template for page titles, e.g. "{{ title }} | {{ site.title }}"
+    pub title_template: Option<String>,
 }
 
 fn default_language() -> String {
