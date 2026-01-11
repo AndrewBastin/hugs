@@ -62,7 +62,7 @@ pub async fn create_site(name: Option<PathBuf>) -> Result<()> {
     println!();
     println!("  To get started:");
     println!("    {} {}", "cd".bold(), path_quoted);
-    println!("    {}", "hugs dev .".bold());
+    println!("    {}", "hugs dev".bold());
     println!();
 
     Ok(())
