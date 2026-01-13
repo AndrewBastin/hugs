@@ -8,7 +8,7 @@ actix = "0.13.5"
 actix-web = "4.12.1"
 actix-web-actors = "4.3.1"
 atom_syndication = "0.12.7"
-chrono = { version = "0.4.42", features = ["serde"] }
+chrono = { version = "0.4.42", features = ["serde", "unstable-locales"] }
 clap = { version = "4.5.54", features = ["derive"] }
 markdown = "1.0.0"
 markdown-frontmatter = { version = "0.4.0", features = ["yaml"] }

@@ -81,6 +81,69 @@ It strips code blocks, HTML tags, and markdown syntax before counting words. The
 reading_speed = 250  # words per minute
 ```
 
+### The `datefmt` Filter
+
+The `datefmt` filter formats dates using strftime patterns with locale support:
+
+{% raw %}
+```jinja
+{{ page.date | datefmt("%B %d, %Y") }}
+{# Output: "January 15, 2024" #}
+```
+{% endraw %}
+
+It accepts dates in these formats:
+- `2024-01-15` (YYYY-MM-DD)
+- `2024-01-15T10:30:00Z` (ISO 8601)
+- `2024-01-15 10:30:00` (YYYY-MM-DD HH:MM:SS)
+
+**Locale support:**
+
+By default, `datefmt` uses your site's `language` setting from `config.toml`. You can override it per-filter:
+
+{% raw %}
+```jinja
+{{ page.date | datefmt("%A, %d %B %Y", locale="fr_FR") }}
+{# Output: "lundi, 15 janvier 2024" #}
+
+{{ page.date | datefmt("%d %B %Y", locale="de_DE") }}
+{# Output: "15 Januar 2024" #}
+```
+{% endraw %}
+
+**Common strftime patterns:**
+
+| Pattern | Description | Example |
+|---------|-------------|---------|
+| `%Y` | Full year | 2024 |
+| `%y` | Short year (2 digits) | 24 |
+| `%m` | Month with leading zero | 01-12 |
+| `%-m` | Month without leading zero | 1-12 |
+| `%d` | Day with leading zero | 01-31 |
+| `%-d` | Day without leading zero | 1-31 |
+| `%e` | Day space-padded | &nbsp;1-31 |
+| `%B` | Full month name | January |
+| `%b` | Abbreviated month | Jan |
+| `%A` | Full weekday | Monday |
+| `%a` | Abbreviated weekday | Mon |
+| `%H` | Hour 24h with leading zero | 00-23 |
+| `%-H` | Hour 24h without leading zero | 0-23 |
+| `%I` | Hour 12h with leading zero | 01-12 |
+| `%-I` | Hour 12h without leading zero | 1-12 |
+| `%M` | Minute | 00-59 |
+| `%S` | Second | 00-59 |
+| `%p` | AM/PM | AM |
+
+**Available locales:**
+
+Hugs supports 400+ locales via [pure-rust-locales](https://docs.rs/pure-rust-locales). Common examples:
+- `en_US`, `en_GB`, `en_AU` - English variants
+- `fr_FR`, `de_DE`, `es_ES`, `it_IT` - European languages
+- `ja_JP`, `zh_CN`, `ko_KR` - Asian languages
+- `pt_BR`, `ru_RU`, `ar_EG` - Other languages
+
+Use underscore (`en_US`) or hyphen (`en-US`) format. See the full list at [glibc locales](https://sourceware.org/git/?p=glibc.git;a=tree;f=localedata/locales).
+
 ### Filters
 
 Jinja provides filters to transform values. Chain them with the `|` operator:

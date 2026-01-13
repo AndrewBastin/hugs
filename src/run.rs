@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use serde_yaml::Value as YamlValue;
 use sha2::{Sha256, Digest};
+use chrono::{DateTime, Locale, NaiveDate, NaiveDateTime, Utc};
 use minijinja::{Environment, State, Value};
 use tokio::task::JoinSet;
 use walkdir::WalkDir;
@@ -319,6 +320,82 @@ fn create_readtime_function(
     }
 }
 
+/// Parse a locale string into a chrono Locale.
+/// Normalizes hyphens to underscores (e.g., "en-US" -> "en_US").
+fn parse_locale(s: &str) -> Option<Locale> {
+    let normalized = s.replace('-', "_");
+    Locale::try_from(normalized.as_str()).ok()
+}
+
+/// Parse a date string into a DateTime<Utc>.
+/// Supports: ISO 8601/RFC 3339, YYYY-MM-DD, YYYY-MM-DD HH:MM:SS
+fn parse_date_string_for_filter(s: &str) -> std::result::Result<DateTime<Utc>, minijinja::Error> {
+    // ISO 8601 / RFC 3339 (2024-01-15T10:30:00Z)
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+
+    // YYYY-MM-DD (2024-01-15)
+    if let Ok(nd) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        if let Some(ndt) = nd.and_hms_opt(0, 0, 0) {
+            return Ok(DateTime::from_naive_utc_and_offset(ndt, Utc));
+        }
+    }
+
+    // YYYY-MM-DD HH:MM:SS (2024-01-15 10:30:00)
+    if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Ok(DateTime::from_naive_utc_and_offset(ndt, Utc));
+    }
+
+    Err(minijinja::Error::new(
+        minijinja::ErrorKind::InvalidOperation,
+        format!(
+            "datefmt: couldn't parse date '{}'. Supported formats: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SSZ, YYYY-MM-DD HH:MM:SS",
+            s
+        ),
+    ))
+}
+
+/// Create the `datefmt` filter for locale-aware date formatting.
+///
+/// Usage in templates:
+///   {{ page.date | datefmt("%B %d, %Y") }}
+///   {{ page.date | datefmt("%A, %d %B %Y", locale="fr_FR") }}
+fn create_datefmt_filter(
+    default_locale: String,
+) -> impl Fn(&State, Value, String, minijinja::value::Kwargs) -> std::result::Result<String, minijinja::Error>
+       + Send
+       + Sync
+       + 'static {
+    // Pre-parse the default locale at filter creation time
+    let default_locale_parsed = parse_locale(&default_locale).unwrap_or(Locale::POSIX);
+
+    move |_state: &State, value: Value, format: String, kwargs: minijinja::value::Kwargs| {
+        // Get the locale from kwargs or use default
+        let locale_str: Option<String> = kwargs.get("locale")?;
+        kwargs.assert_all_used()?;
+
+        let locale = match locale_str {
+            Some(ref s) => parse_locale(s).unwrap_or(default_locale_parsed),
+            None => default_locale_parsed,
+        };
+
+        // Parse the date value
+        let datetime = match value.as_str() {
+            Some(s) => parse_date_string_for_filter(s)?,
+            None => {
+                return Err(minijinja::Error::new(
+                    minijinja::ErrorKind::InvalidOperation,
+                    format!("datefmt: expected a date string, got {}", value.kind()),
+                ))
+            }
+        };
+
+        // Format with locale
+        Ok(datetime.format_localized(&format, locale).to_string())
+    }
+}
+
 /// Count words in markdown content, stripping HTML tags and markdown syntax
 fn count_words_in_markdown(text: &str) -> usize {
     let without_code_blocks = strip_code_blocks(text);
@@ -382,6 +459,7 @@ fn create_template_env(
     pages: &Arc<Vec<PageInfo>>,
     cache_bust: Option<&CacheBustFunction>,
     reading_speed: u32,
+    default_language: &str,
 ) -> (Environment<'static>, TemplateHints) {
     let mut env = Environment::new();
     env.add_function("pages", create_pages_function(Arc::clone(pages)));
@@ -389,6 +467,9 @@ fn create_template_env(
     if let Some(cb) = cache_bust {
         env.add_function("cache_bust", cb.to_minijinja_fn());
     }
+
+    // Add the datefmt filter with the site's default locale
+    env.add_filter("datefmt", create_datefmt_filter(default_language.to_string()));
 
     // Collect function names before adding help (includes builtins + our functions)
     let mut function_names: Vec<String> = env.globals().map(|(name, _)| name.to_string()).collect();
@@ -430,8 +511,9 @@ pub fn render_template<T: serde::Serialize>(
     cache_bust: Option<&CacheBustFunction>,
     macros_template: &str,
     reading_speed: u32,
+    default_language: &str,
 ) -> std::result::Result<String, TemplateError> {
-    let (mut env, hints) = create_template_env(pages, cache_bust, reading_speed);
+    let (mut env, hints) = create_template_env(pages, cache_bust, reading_speed, default_language);
 
     // Extract macro names and add them to hints for error suggestions
     let macro_names = extract_macro_names(macros_template);
@@ -464,7 +546,7 @@ pub fn render_root_template<T: serde::Serialize>(
     ctx: T,
     cache_bust: &CacheBustFunction,
 ) -> std::result::Result<String, TemplateError> {
-    let (mut env, hints) = create_template_env(&app_data.pages, Some(cache_bust), app_data.config.build.reading_speed);
+    let (mut env, hints) = create_template_env(&app_data.pages, Some(cache_bust), app_data.config.build.reading_speed, &app_data.config.site.language);
 
     // Extract macro names and add them to hints for error suggestions
     let macro_names = extract_macro_names(&app_data.macros_template);
@@ -498,8 +580,9 @@ fn parse_md(
     source_name: &str,
     macros_template: &str,
     reading_speed: u32,
+    default_language: &str,
 ) -> Result<String> {
-    let content_md = render_template(content_jinja_md, page_content, pages, None, macros_template, reading_speed)
+    let content_md = render_template(content_jinja_md, page_content, pages, None, macros_template, reading_speed, default_language)
         .map_err(|e| HugsError::template_render_named(
             source_name,
             content_jinja_md,
@@ -655,9 +738,10 @@ impl AppData {
         };
 
         let reading_speed = config.build.reading_speed;
-        let header_html = parse_md(&header_md, &initial_page_content, &pages, "_/header.md", &macros_template, reading_speed)?;
-        let footer_html = parse_md(&footer_md, &initial_page_content, &pages, "_/footer.md", &macros_template, reading_speed)?;
-        let nav_html = parse_md(&nav_md, &initial_page_content, &pages, "_/nav.md", &macros_template, reading_speed)?;
+        let default_language = &config.site.language;
+        let header_html = parse_md(&header_md, &initial_page_content, &pages, "_/header.md", &macros_template, reading_speed, default_language)?;
+        let footer_html = parse_md(&footer_md, &initial_page_content, &pages, "_/footer.md", &macros_template, reading_speed, default_language)?;
+        let nav_html = parse_md(&nav_md, &initial_page_content, &pages, "_/nav.md", &macros_template, reading_speed, default_language)?;
 
         let notfound_path = site_path.join("[404].md");
         let notfound_page = if notfound_path.exists() {
@@ -1469,7 +1553,7 @@ pub async fn resolve_path_to_doc(
     }
 
     // Render only the body (not frontmatter) with the merged context
-    let body = render_template(raw_body, &context, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed)
+    let body = render_template(raw_body, &context, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed, &app_data.config.site.language)
         .map_err(|e| HugsError::template_render(
             &resolvable_path,
             raw_body,
@@ -1571,7 +1655,7 @@ pub async fn resolve_dynamic_doc(
     }
 
     // Render only the body (not frontmatter) with the merged context
-    let body = render_template(raw_body, &context, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed)
+    let body = render_template(raw_body, &context, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed, &app_data.config.site.language)
         .map_err(|e| HugsError::template_render(
             &resolvable_path,
             raw_body,
@@ -1625,7 +1709,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
     }
 
     // Render only the body (not frontmatter) with the merged context
-    let body = render_template(raw_body, &context, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed).ok()?;
+    let body = render_template(raw_body, &context, &app_data.pages, None, &app_data.macros_template, app_data.config.build.reading_speed, &app_data.config.site.language).ok()?;
 
     let doc_html = markdown_to_html(&body, &app_data.config.build.syntax_highlighting).ok()?;
 
@@ -1652,6 +1736,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
         None,
         &app_data.macros_template,
         app_data.config.build.reading_speed,
+        &app_data.config.site.language,
     ).ok()?;
 
     let main_content_html = markdown::to_html_with_options(&content_template_rendered, &markdown_options()).ok()?;
@@ -1850,6 +1935,7 @@ fn render_page_html_internal(
         None,
         &app_data.macros_template,
         app_data.config.build.reading_speed,
+        &app_data.config.site.language,
     )
     .map_err(|e| HugsError::template_render_named(
         "_/content.md",
@@ -1890,4 +1976,73 @@ fn render_page_html_internal(
             e.macro_prefix_bytes,
             e.macro_prefix_lines,
         ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_locale() {
+        // Test underscore format
+        assert!(parse_locale("en_US").is_some());
+        assert!(parse_locale("fr_FR").is_some());
+        assert!(parse_locale("de_DE").is_some());
+
+        // Test hyphen format (should be normalized)
+        assert!(parse_locale("en-US").is_some());
+        assert!(parse_locale("fr-FR").is_some());
+
+        // Invalid locale
+        assert!(parse_locale("invalid").is_none());
+    }
+
+    #[test]
+    fn test_parse_date_string() {
+        // YYYY-MM-DD format
+        assert!(parse_date_string_for_filter("2024-01-15").is_ok());
+
+        // ISO 8601 format
+        assert!(parse_date_string_for_filter("2024-01-15T10:30:00Z").is_ok());
+
+        // YYYY-MM-DD HH:MM:SS format
+        assert!(parse_date_string_for_filter("2024-01-15 10:30:00").is_ok());
+
+        // Invalid format
+        assert!(parse_date_string_for_filter("invalid").is_err());
+        assert!(parse_date_string_for_filter("15/01/2024").is_err());
+    }
+
+    #[test]
+    fn test_datefmt_filter_basic() {
+        let mut env = Environment::new();
+        env.add_filter("datefmt", create_datefmt_filter("en_US".to_string()));
+        env.add_template("test", "{{ date | datefmt(\"%Y-%m-%d\") }}").unwrap();
+
+        let tmpl = env.get_template("test").unwrap();
+        let result = tmpl.render(minijinja::context! { date => "2024-01-15" }).unwrap();
+        assert_eq!(result, "2024-01-15");
+    }
+
+    #[test]
+    fn test_datefmt_filter_localized() {
+        let mut env = Environment::new();
+        env.add_filter("datefmt", create_datefmt_filter("en_US".to_string()));
+        env.add_template("test", "{{ date | datefmt(\"%B\") }}").unwrap();
+
+        let tmpl = env.get_template("test").unwrap();
+        let result = tmpl.render(minijinja::context! { date => "2024-01-15" }).unwrap();
+        assert_eq!(result, "January");
+    }
+
+    #[test]
+    fn test_datefmt_filter_locale_override() {
+        let mut env = Environment::new();
+        env.add_filter("datefmt", create_datefmt_filter("en_US".to_string()));
+        env.add_template("test", "{{ date | datefmt(\"%B\", locale=\"fr_FR\") }}").unwrap();
+
+        let tmpl = env.get_template("test").unwrap();
+        let result = tmpl.render(minijinja::context! { date => "2024-01-15" }).unwrap();
+        assert_eq!(result, "janvier");
+    }
 }
