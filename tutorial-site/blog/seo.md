@@ -1,14 +1,18 @@
 ---
 title: SEO & Meta Tags
 description: How frontmatter maps to HTML meta tags
-order: 8
+order: 9
+tags:
+  - publishing
 ---
 
-Hugs **automatically generates SEO-friendly meta tags** from your frontmatter and config. Your pages are ready for search engines and social media without extra work.
+### Search engines and social media, handled
 
-### How It Works
+Hugs generates SEO-friendly meta tags from your frontmatter and config automatically. Your pages are ready for search engines and social media without extra work.
 
-When you set a title and description in frontmatter:
+### How it works
+
+Set a title and description in frontmatter:
 
 ```markdown
 ---
@@ -17,18 +21,14 @@ description: Learn how to do something cool
 ---
 ```
 
-Hugs generates the corresponding HTML:
+Hugs generates the HTML — plus Open Graph tags (for Facebook, LinkedIn) and Twitter Card tags so your pages look great when shared:
 
 ```html
 <title>My Awesome Post</title>
 <meta name="description" content="Learn how to do something cool">
 ```
 
-But it doesn't stop there - Hugs also generates Open Graph tags (for Facebook, LinkedIn) and Twitter Card tags so your pages look great when shared.
-
-### The Full Picture
-
-Here's how frontmatter and config fields map to meta tags:
+### What maps where
 
 - **`title`** (frontmatter) → `<title>`, `og:title`, `twitter:title`
 - **`description`** (frontmatter or site) → `<meta name="description">`, `og:description`, `twitter:description`
@@ -38,9 +38,9 @@ Here's how frontmatter and config fields map to meta tags:
 - **`title`** (site config) → `og:site_name`
 - **`twitter_handle`** (site config) → `twitter:site`
 
-### Site-Wide Defaults
+### Site-wide defaults
 
-Set defaults in `config.toml` that apply to all pages:
+Set these once in `config.toml` and they apply everywhere:
 
 ```toml
 [site]
@@ -52,13 +52,13 @@ twitter_handle = "@janedoe"
 default_image = "/images/social-card.png"
 ```
 
-**`url`** is important - it's used for canonical links and converting relative image paths to full URLs.
+`url` is important — it's used for canonical links and converting relative image paths to full URLs.
 
-**`default_image`** provides a fallback social image for pages that don't specify one.
+`default_image` provides a fallback social image for pages that don't specify one.
 
-### Page-Specific Overrides
+### Override per page
 
-Override any default in individual page frontmatter:
+Page frontmatter always takes precedence:
 
 ```markdown
 ---
@@ -69,51 +69,30 @@ image: /images/guest-post-cover.png
 ---
 ```
 
-Page values **always take precedence** over site defaults.
+### Social share images
 
-### Social Share Images
+The `image` field controls what appears when your page is shared. Hugs checks in order:
 
-The `image` field controls what appears when your page is shared on social media. It works like this:
+1. Page's `image` frontmatter
+2. Site's `default_image` config
+3. If neither exists, no image tag
 
-1. If the page has an `image` in frontmatter, use that
-2. Otherwise, fall back to `default_image` from config
-3. If neither exists, no image tag is generated
+Relative paths become full URLs automatically. `/images/my-post.png` becomes `https://mysite.com/images/my-post.png`. External URLs work too.
 
-Relative paths are **converted to full URLs** automatically:
+### Twitter cards
 
-```markdown
----
-image: /images/my-post.png
----
-```
+Hugs picks the right card type:
 
-If your site URL is `https://mysite.com`, this becomes:
-```html
-<meta property="og:image" content="https://mysite.com/images/my-post.png">
-```
+- **`summary_large_image`** — when there's an image (large preview)
+- **`summary`** — when there isn't (smaller card)
 
-External URLs work too:
-
-```markdown
----
-image: https://cdn.example.com/image.png
----
-```
-
-### Twitter Cards
-
-Hugs automatically sets the right Twitter card type:
-
-- **`summary_large_image`** - Used when your page has an image (displays a large preview)
-- **`summary`** - Used when there's no image (displays a smaller card)
-
-If you've set `twitter_handle` in config, it appears as the `twitter:site` tag.
+If you've set `twitter_handle` in config, it appears as `twitter:site`.
 
 ### Canonical URLs
 
-Every page gets a `<link rel="canonical">` tag pointing to its full URL. This helps search engines understand which URL is the "official" version of your page.
+Every page gets a `<link rel="canonical">` pointing to its full URL. This tells search engines which URL is the "official" version.
 
-For a page at `/blog/my-post`, with `url = "https://mysite.com"`:
+For `/blog/my-post` with `url = "https://mysite.com"`:
 
 ```html
 <link rel="canonical" href="https://mysite.com/blog/my-post">
@@ -121,18 +100,13 @@ For a page at `/blog/my-post`, with `url = "https://mysite.com"`:
 
 ### Sitemap
 
-Hugs automatically generates a `sitemap.xml` file during builds. This helps search engines discover all your pages.
+Hugs generates `sitemap.xml` during builds — search engines use this to discover your pages. It includes every page with its canonical URL and `lastmod` dates if your pages have date fields.
 
-The sitemap:
-- Lists every page on your site
-- Includes the full canonical URL for each page
-- Adds `lastmod` dates if your pages have date fields
+No configuration needed, just make sure `url` is set.
 
-No configuration needed - just make sure `url` is set in your config.
+### Everything that gets generated
 
-### What Gets Generated
-
-Here's the complete set of meta tags Hugs adds to every page:
+Here's the full set of meta tags on every page:
 
 ```html
 <!-- Basic SEO -->
@@ -157,26 +131,19 @@ Here's the complete set of meta tags Hugs adds to every page:
 <meta name="twitter:site" content="@handle">
 ```
 
-### Best Practices
+### Tips
 
-**Write good descriptions** - Keep them under 160 characters. They appear in search results and social previews.
+- **Descriptions under 160 characters** — that's what shows in search results
+- **Meaningful titles** — first thing people see, make it count
+- **Set your site URL** — canonical links and images need it
+- **Add social images** — posts with images get more engagement
+- **Consistent author names** — set site-wide, override only for guests
 
-**Use meaningful titles** - The title is the first thing people see. Make it clear and compelling.
-
-**Set your site URL** - Without it, canonical links and image URLs won't work correctly.
-
-**Add social images** - Posts with images get significantly more engagement when shared.
-
-**Use consistent author names** - Set a site-wide author and only override for guest posts.
-
-### Try It!
-
-1. Open `config.toml` and make sure `url` is set
-2. Add a `description` to any page's frontmatter
-3. View source in your browser (Ctrl+U)
-4. Search for "og:" to see the Open Graph tags
-5. Paste a page URL into [Twitter's Card Validator](https://cards-dev.twitter.com/validator) or [Facebook's Sharing Debugger](https://developers.facebook.com/tools/debug/) to preview how it looks
+{% call tryit() %}
+1. Make sure `url` is set in `config.toml`
+2. Add a `description` to any page
+3. View source (Ctrl+U) and search for "og:"
+4. Test with [Twitter's Card Validator](https://cards-dev.twitter.com/validator) or [Facebook's Sharing Debugger](https://developers.facebook.com/tools/debug/)
+{% endcall %}
 
 ---
-
-Next up: [Deployment](/blog/deployment) - build for production and get your site online.

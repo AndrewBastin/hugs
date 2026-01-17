@@ -3,25 +3,25 @@ title: Welcome
 description: Learn how to build sites with Hugs
 ---
 
-# Hey there!
+# Welcome to Hugs
 
-Welcome to the Hugs documentation! I'm the homepage, and I'll help you learn how to build sites with Hugs.
+You just created a site — and you're already looking at it. This is the documentation, but it's also yours. Change it, delete it, build something new.
 
-> **Tip:** You can open this documentation anytime by running `hugs doc` in your terminal!
+> **Tip:** You can always get back here by running `hugs doc` in your terminal.
 
-## How This Page Works
+## What you're looking at
 
-Take a look around - this page has four parts:
+This page comes together from four pieces:
 
-1. **Header** - The bit at the very top with the site name. I get that from `_/header.md`.
-2. **Navigation** - The links just below. Those come from `_/nav.md`.
-3. **Content** - You're reading it! This is me, `index.md`.
-4. **Footer** - Down at the bottom. That's `_/footer.md`.
+1. **Header** at the top — lives in `_/header.md`
+2. **Navigation** just below — that's `_/nav.md`
+3. **Content** (what you're reading) — this file, `index.md`
+4. **Footer** at the bottom — `_/footer.md`
 
-Every page on your site follows this same structure. The header, nav, and footer stay consistent - only the content area changes based on which page you're viewing.
+Every page works this way. The header, nav, and footer stay consistent — only the content swaps out.
 
----
+{% call tryit() %}
+Open `index.md`, change something, save. The page reloads on its own.
+{% endcall %}
 
-Try editing me right now - open `index.md` and change something. The page will reload automatically when you save!
-
-When you're ready to learn more, head over to the [About page](/about) and I'll show you how to create new pages.
+When you're ready, the [About page](/about) shows you how to make new pages.

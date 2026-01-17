@@ -1,43 +1,42 @@
 ---
 title: Building This Site
 description: How this tutorial site was made
-order: 11
+order: 12
+tags:
+  - basics
 ---
 
-You've been reading this tutorial site - now let's peek behind the curtain. This page explains how the site is structured, so you can apply the same ideas to your own projects.
+### Behind the curtain
 
-### The File Structure
+You've been reading this tutorial — now let's look at how it's built. Same techniques work for your own projects.
 
-Here's the complete structure of this tutorial site:
+### File structure
 
 ```
-docs/
-├── config.toml          # Site settings
-├── index.md             # Homepage - introduces page structure
-├── about.md             # How to create pages and edit nav
+tutorial-site/
+├── config.toml
+├── index.md
+├── about.md
 ├── blog/
-│   ├── index.md         # Blog index with dynamic post listing
-│   ├── config.md        # Tutorial: config.toml
+│   ├── index.md              # lists all posts
+│   ├── [tag].md              # dynamic tag pages
+│   ├── config.md
 │   ├── pages-and-frontmatter.md
-│   ├── dynamic-paths.md
-│   ├── templating.md
-│   ├── syntax-highlighting.md
-│   ├── theming.md
-│   ├── assets.md
-│   ├── seo.md
-│   ├── deployment.md
-│   ├── feeds.md
-│   └── building-this-site.md  # You are here
+│   ├── ...
+│   └── building-this-site.md # you are here
 └── _/
-    ├── header.md        # Site header
-    ├── nav.md           # Navigation links
-    ├── footer.md        # Site footer
-    └── theme.css        # Styling
+    ├── header.md
+    ├── nav.md
+    ├── footer.md
+    ├── content.md            # wraps page content
+    ├── theme.css
+    └── macros/
+        └── tryit.md          # "Try it yourself" boxes
 ```
 
-### Tutorial Ordering
+### Post ordering
 
-Each blog post has an `order` field in its frontmatter:
+Each post has an `order` field:
 
 ```markdown
 ---
@@ -46,49 +45,79 @@ order: 1
 ---
 ```
 
-The blog index uses this to sort posts:
+The blog index sorts by it:
 
-```
-{% raw %}{% for post in pages(within="/blog") | sort(attribute="order") %}
+{% raw %}
+```jinja
+{% for post in pages(within="/blog") | sort(attribute="order") %}
 - [{{ post.title }}]({{ post.url }})
-{% endfor %}{% endraw %}
+{% endfor %}
 ```
+{% endraw %}
 
-This keeps posts in the right sequence regardless of filenames or creation dates.
+Posts stay in sequence regardless of filename or creation date.
 
-### CSS Styling
+### The tryit macro
 
-The `_/theme.css` file uses Hugs-specific attributes to target styling. Here are the key techniques:
+You've seen the "Try it yourself" boxes throughout. That's a macro in `_/macros/tryit.md`:
 
-**Showing titles only on blog posts:**
+{% raw %}
+```jinja
+{% call tryit() %}
+1. Open config.toml
+2. Change something
+{% endcall %}
+```
+{% endraw %}
 
-This site uses a `_/content.md` template to conditionally show titles only on blog posts:
+One file, reusable everywhere. See [Macros](/blog/macros) for how to create your own.
+
+### Tags for blog posts
+
+Tags are rendered as clickable badges that link to tag pages:
+
+{% raw %}
+```jinja
+{% for tag in tags %}
+  <a href="/blog/{{ tag }}" class="tag-badge">{{ tag }}</a>
+{% endfor %}
+```
+{% endraw %}
+
+### Prev/next navigation
+
+Notice the cards at the bottom of each tutorial? Those come from `_/content.md`. It looks up posts by their `order` field and renders navigation links:
+
+{% raw %}
+```jinja
+{% set all_posts = pages(within="/blog") | selectattr("order") | list %}
+{% set prev_post = all_posts | selectattr("order", "eq", order - 1) | first %}
+{% set next_post = all_posts | selectattr("order", "eq", order + 1) | first %}
+
+{% if prev_post %}
+  <!-- render prev card -->
+{% endif %}
+{% if next_post %}
+  <!-- render next card -->
+{% endif %}
+```
+{% endraw %}
+
+No manual "Next up" links needed — the navigation generates itself from the `order` values.
+
+### CSS techniques
+
+**Titles only on blog posts** — `_/content.md` checks `path_class`:
 
 {% raw %}
 ```jinja
 {% if path_class is startingwith("blog ") %}
 # {{ title }}
 {% endif %}
-
-{{ content }}
 ```
 {% endraw %}
 
-The `path_class` variable contains a space-separated version of the URL path (e.g., `blog macros` for `/blog/macros`). The `startingwith` test checks if we're on a blog post page (not `/blog` itself, hence the space after "blog").
-
-**Compact list spacing on the blog index:**
-
-The blog index shows a list of posts. To tighten up the spacing just for that page:
-
-```css
-[hg-path="blog"] li p {
-  margin-bottom: 0.1em !important;
-}
-```
-
-**Navigation as a horizontal row:**
-
-The nav links come from `_/nav.md` as a paragraph of links. Flexbox turns them into a row:
+**Horizontal nav** — flexbox on the links:
 
 ```css
 nav > p {
@@ -97,71 +126,18 @@ nav > p {
 }
 ```
 
-**Sticky footer:**
-
-On short pages, the footer sticks to the viewport bottom instead of floating mid-page:
+**Sticky footer** — flex column layout:
 
 ```css
 body {
-  box-sizing: border-box;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
 }
-
-main {
-  flex: 1 0 auto;
-}
-
-footer {
-  flex-shrink: 0;
-}
+main { flex: 1 0 auto; }
+footer { flex-shrink: 0; }
 ```
 
-**Base theme:**
-
-The rest of `theme.css` is [Sakura.css](https://github.com/oxalorg/sakura/) - a minimal classless CSS framework. It styles plain HTML elements nicely without requiring classes.
-
-### The Navigation Flow
-
-Each tutorial post ends with a "Next up" link:
-
-```markdown
----
-
-Next up: [Pages & Frontmatter](/blog/pages-and-frontmatter) - learn about...
-```
-
-This creates a linear path through the content. Users can jump around via the blog index, but there's always a clear "what's next" for those following along.
-
-### Accessing These Docs
-
-This entire documentation site is embedded inside the Hugs binary itself. Running `hugs doc` extracts it to a temporary folder and serves it locally - no internet required!
-
-This means you can reference the docs anytime, anywhere:
-
-```bash
-hugs doc              # Opens docs in your browser
-hugs doc --port 9000  # Use a specific port
-hugs doc --no-open    # Don't auto-open browser
-```
-
-The docs stay available as long as the command runs. Press `Ctrl+C` to stop.
-
-### Your Turn
-
-Hugs is designed to get out of your way. No complex build pipelines, no plugin ecosystems to navigate, no configuration rabbit holes. Just markdown files that become web pages.
-
-This tutorial site is a starting point. Feel free to:
-
-- **Delete the blog posts** and start fresh
-- **Keep the structure** but replace the content
-- **Use it as reference** while building something different
-
-The best way to learn Hugs is to build something real. Pick a project - a blog, a portfolio, documentation for a side project - and start writing.
+**Base theme** — a modified version of [Sakura.css](https://github.com/oxalorg/sakura/) with [Inter](https://rsms.me/inter/) font, rose-tinted accents, and CSS variables for easy customization.
 
 ---
-
-Thanks for following along! If you have questions or feedback, check out the [Hugs repository](https://github.com/AndrewBastin/hugs).
-
-(っ◕‿◕)っ

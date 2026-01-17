@@ -1,20 +1,22 @@
 ---
 title: Deployment
 description: Building for production and hosting options
-order: 9
+order: 10
+tags:
+  - publishing
 ---
 
-You've been using `hugs dev` for local development. When you're ready to publish, `hugs build` creates optimized static files ready for any web host.
+### From dev to production
 
-### Building for Production
-
-Run the build command from your terminal:
+You've been running `hugs dev`. When you're ready to publish, `hugs build` creates optimized static files for any web host.
 
 ```bash
 hugs build my-site
 ```
 
-This creates a `dist/` folder containing your complete static site:
+> **Important:** Before building, make sure `url` in your `config.toml` matches your production domain. This affects RSS feeds, sitemaps, and social meta tags.
+
+This creates a `dist/` folder with your complete site:
 
 ```
 dist/
@@ -23,44 +25,39 @@ dist/
 │   └── index.html
 ├── blog/
 │   ├── index.html
-│   ├── my-post/
-│   │   └── index.html
-│   └── ...
+│   └── my-post/
+│       └── index.html
 ├── theme.css
 ├── highlight.css
 ├── sitemap.xml
-├── images/
-│   └── ...
-└── ...
+└── images/
+    └── ...
 ```
 
-Every markdown file becomes an `index.html` in its own folder, giving you clean URLs like `/about` instead of `/about.html`.
+Every markdown file becomes an `index.html` in its own folder — clean URLs like `/about` instead of `/about.html`.
 
-### Custom Output Directory
+### Custom output directory
 
-By default, Hugs outputs to `dist/`. Use the `-o` flag to change it:
+Default is `dist/`. Change it with `-o`:
 
 ```bash
 hugs build my-site -o public
-hugs build my-site -o build
 hugs build my-site -o _site
 ```
 
-Different hosts expect different folder names - use whatever your host prefers.
+Use whatever your host expects.
 
-### What the Build Does
+### What the build does
 
-During a production build, Hugs:
+1. **Renders all pages** — markdown to optimized HTML
+2. **Minifies HTML & CSS** — smaller files, faster loads
+3. **Generates sitemap.xml** — helps search engines find your pages
+4. **Generates feeds** — RSS/Atom if configured
+5. **Copies static assets** — images, fonts, everything else
+6. **Creates 404.html** — if you have a `[404].md`
+7. **Cache-busts assets** — content hashes for browser caching
 
-1. **Renders all pages** - Converts markdown to optimized HTML
-2. **Minifies HTML & CSS** - Removes whitespace and comments for smaller files
-3. **Generates sitemap.xml** - Helps search engines discover your pages
-4. **Generates feeds** - Creates RSS/Atom feeds if configured
-5. **Copies static assets** - Images, fonts, and other files
-6. **Creates 404.html** - Custom error page if you have a `[404].md`
-7. **Cache-busts assets** - Adds content hashes for browser caching
-
-### Build Configuration
+### Build configuration
 
 Control build behavior in `config.toml`:
 
@@ -73,27 +70,27 @@ enabled = true           # Default: true
 theme = "one-dark-pro"   # Default theme
 ```
 
-Setting `minify = false` can be useful for debugging the generated HTML.
+Set `minify = false` if you need to debug the generated HTML.
 
-### Where to Host
+### Where to host
 
-Your built site is just static files - it works on any static hosting service:
+Static files work anywhere:
 
 **Free options:**
-- **GitHub Pages** - Free for public repos, custom domains supported
-- **Netlify** - Generous free tier, automatic HTTPS
-- **Cloudflare Pages** - Fast global CDN, unlimited bandwidth
-- **Vercel** - Great performance, easy setup
-- **GitLab Pages** - Similar to GitHub Pages
 
-**Traditional hosts:**
-- Any web server (nginx, Apache, Caddy)
-- S3 + CloudFront
-- Any shared hosting with FTP access
+| Host | Highlights |
+|------|------------|
+| [GitHub Pages](https://pages.github.com/) | Free for public repos, custom domains |
+| [Netlify](https://www.netlify.com/) | Generous free tier, automatic HTTPS |
+| [Cloudflare Pages](https://pages.cloudflare.com/) | Fast global CDN, unlimited bandwidth |
+| [Vercel](https://vercel.com/) | Great performance, easy setup |
+| [GitLab Pages](https://docs.gitlab.com/ee/user/project/pages/) | Similar to GitHub Pages |
+
+**Traditional:** nginx, Apache, Caddy, S3 + CloudFront, any shared hosting
 
 ### GitHub Pages
 
-The simplest approach for GitHub repos. Add this workflow to `.github/workflows/deploy.yml`:
+Add `.github/workflows/deploy.yml`:
 
 ```yaml
 name: Deploy to GitHub Pages
@@ -128,13 +125,11 @@ jobs:
         uses: actions/deploy-pages@v4
 ```
 
-Then enable GitHub Pages in your repo settings, selecting "GitHub Actions" as the source.
+Enable GitHub Pages in repo settings → select "GitHub Actions" as source.
 
 ### Netlify
 
-Drop your `dist/` folder into Netlify's web UI, or connect your repo for automatic deploys.
-
-For repo-connected deploys, create `netlify.toml`:
+Drop `dist/` into Netlify's web UI, or connect your repo. For automatic deploys, create `netlify.toml`:
 
 ```toml
 [build]
@@ -142,21 +137,15 @@ For repo-connected deploys, create `netlify.toml`:
   publish = "dist"
 ```
 
-Or use the Netlify UI to set:
-- **Build command:** `cargo install hugs && hugs build .`
-- **Publish directory:** `dist`
-
 ### Cloudflare Pages
 
-Connect your GitHub/GitLab repo and configure:
+Connect your repo and set:
 - **Build command:** `cargo install hugs && hugs build . -o dist`
-- **Build output directory:** `dist`
-
-Cloudflare Pages has excellent global performance and a generous free tier.
+- **Output directory:** `dist`
 
 ### Vercel
 
-Create `vercel.json` in your repo:
+Create `vercel.json`:
 
 ```json
 {
@@ -165,9 +154,9 @@ Create `vercel.json` in your repo:
 }
 ```
 
-### Pre-built Binaries
+### Faster CI with pre-built binaries
 
-For faster CI builds, download the Hugs binary directly instead of compiling:
+Skip Rust compilation by downloading the binary directly:
 
 ```yaml
 - name: Install Hugs
@@ -177,11 +166,11 @@ For faster CI builds, download the Hugs binary directly instead of compiling:
     sudo mv hugs /usr/local/bin/
 ```
 
-This skips the Rust compilation step, making deploys much faster.
+Much faster deploys.
 
-### Custom 404 Pages
+### Custom 404 page
 
-Most static hosts serve `404.html` for missing pages. Create `[404].md` in your site root:
+Create `[404].md` in your site root:
 
 ```markdown
 ---
@@ -195,11 +184,11 @@ The page you're looking for doesn't exist.
 [Go back home](/)
 ```
 
-Hugs automatically generates `404.html` during builds.
+Hugs generates `404.html` automatically. Most static hosts serve it for missing pages.
 
-### Tips
+### Before you deploy
 
-**Test your build locally** - Before deploying, run `hugs build` and preview the result:
+**Test locally:**
 
 ```bash
 hugs build my-site
@@ -207,27 +196,23 @@ cd dist
 python -m http.server 8000
 ```
 
-**Set your site URL** - The `url` field in `config.toml` is used for canonical links and sitemap. Make sure it matches your deployed domain:
+**Set your site URL** — canonical links and sitemap need it:
 
 ```toml
 [site]
 url = "https://mysite.com"
 ```
 
-**Check your sitemap** - After deploying, visit `/sitemap.xml` to verify all pages are listed correctly.
+**After deploying:** check `/sitemap.xml`, submit it to Google Search Console and Bing Webmaster Tools.
 
-**Submit to search engines** - Submit your sitemap URL to Google Search Console and Bing Webmaster Tools.
+### Build output
 
-### Build Output Summary
-
-After building, Hugs shows a summary:
+Hugs shows a summary when done:
 
 ```
 INFO Build complete! 15 pages, 1 feeds, sitemap, 8 assets
 ```
 
-If there are issues (like missing site URL for sitemap), you'll see warnings with helpful details.
+If something's off (like missing site URL), you'll see warnings with details.
 
 ---
-
-Next up: [RSS & Atom Feeds](/blog/feeds) - syndicate your content with feeds.

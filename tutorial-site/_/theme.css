@@ -1,21 +1,79 @@
 /*
- * Hey! I have marked some important CSS on the top. They don't need to be strictly there.
- * But they are relating to my specific features that you may want to know.
- * Feel free to play around with them once you have read their comments.
- * I also recommend you opening your browser dev tools when editing this 
- * to understand the DOM I generate.
+ * Hey! I've put the interesting Hugs-specific CSS near the top of this file.
+ * These are patterns you'll want to know about — page targeting, components,
+ * layout tricks. Feel free to play around with them once you've read the comments.
  *
- * The default styling theme is marked separately below.
+ * I recommend opening your browser dev tools while editing this file
+ * to see the HTML structure I generate.
  *
- * By the way: I will (by default) minify these CSS files, so don't worry
- * about this bloating your output! 
+ * The base theme (a modified Sakura.css) is at the bottom — it's just
+ * standard HTML element styling, nothing Hugs-specific.
+ *
+ * By the way: I minify CSS in production builds, so these comments
+ * won't bloat your output!
  *
  * (っ◕‿◕)っ
  */
 
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 
 
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ * THEME VARIABLES
+ *
+ * I use these throughout the file. Change them here and the whole
+ * site updates. This is the easiest way to customize your theme.
+ * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ */
+:root {
+  /* Colors */
+  --color-background: #fefefe;
+  --color-text: #1a1a1a;
+  --color-text-muted: #555555;
+  --color-primary: #b5507a;
+  --color-primary-hover: #943f62;
+  --color-secondary: #f9f5f6;
+  --color-border: #d4c4ca;
+  --color-border-light: #e8dfe2;
+
+  /* Code blocks */
+  --color-code-bg: #f7f2f4;
+  --color-code-border: #d4c4ca;
+
+  /* Typography */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "Fira Code", Menlo, Consolas, monospace;
+  --font-size-base: 1.6rem;
+  --font-size-sm: 0.875em;
+  --font-size-xs: 0.8em;
+  --line-height: 1.6;
+
+  /* Layout */
+  --max-width: 42em;
+  --radius: 8px;
+  --radius-sm: 5px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ * PAGE-SPECIFIC STYLING WITH hg-path
+ *
+ * This is neat! I add an `hg-path` attribute to <body> that contains
+ * the URL path with slashes replaced by spaces:
+ *
+ *   /              → hg-path=""
+ *   /about         → hg-path="about"
+ *   /blog/my-post  → hg-path="blog my-post"
+ *
+ * You can use this to style specific pages or entire sections differently.
+ * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ */
 
 /*
  * I'm making the post list on the blog index page more compact here.
@@ -29,38 +87,224 @@
   margin-bottom: 0.1em !important;
 }
 
+/* Some examples you could try (uncomment to use): */
 
 
-/*
- * I am styling the navigation links that are below the header here.
+/* Style just the homepage */
+/* [hg-path=""] main { text-align: center; } */
+
+/* Style a specific page */
+/* [hg-path="about"] h1 { color: var(--color-primary); } */
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ * NAVIGATION
+ *
+ * I'm styling the navigation links that sit below the header here.
+ * The links come from _/nav.md and I wrap them in flexbox to make
+ * them horizontal. The underline animates in on hover using a
+ * ::after pseudo-element.
+ * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
  */
-
 nav > p {
   display: flex;
   gap: 2rem;
-  padding-bottom: 1em;
-  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 1.2em;
+  border-bottom: 1px solid var(--color-border-light);
   font-weight: 500;
-
-  a {
-    text-decoration: none;
-  }
-
-  a:hover {
-    color: #4f4f4f;
-  }
+  margin-bottom: 2em;
 }
 
-/*
- * I am making the footer stick to the bottom of the page here.
+nav > p a {
+  text-decoration: none;
+  position: relative;
+  padding-bottom: 0.2em;
+  background: none !important;
+}
+
+nav > p a::after {
+  content: '';
+  position: absolute;
+  bottom: -0.4em;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-primary-hover));
+  border-radius: 1px;
+}
+
+nav > p a:hover { color: var(--color-text); }
+nav > p a:hover::after { width: 100%; }
+
+
+/* The next section holds custom styles for components: tryit boxes,
+ * tag badges, and prev/next navigation cards.
+ */
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ * TRYIT BOXES
  *
- * This uses flexbox on the body - the main content area grows to fill
- * available space, pushing the footer down. On short pages, the footer
- * stays at the bottom of the viewport instead of floating in the middle.
+ * These are the "Try it yourself" exercise boxes you see in the tutorials.
+ * They're created with a macro:
  *
- * I use `box-sizing: border-box` so the body padding is included in
- * the height calculation, and `100dvh` which handles mobile browser
- * UI better than plain `100vh`.
+ *   {% call tryit() %}
+ *   1. Do this
+ *   2. Then this
+ *   {% endcall %}
+ *
+ * The gradient bar at the top is done with a ::before pseudo-element.
+ * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ */
+.tryit {
+  background: linear-gradient(135deg, #fdf8fa 0%, var(--color-secondary) 100%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1.4em 1.6em;
+  margin-bottom: 2em;
+  box-shadow: var(--shadow-sm);
+  position: relative;
+}
+
+.tryit::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-primary-hover));
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.tryit > p:first-child {
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+  color: var(--color-primary);
+  margin-bottom: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tryit > p:last-child { margin-bottom: 0; }
+.tryit ol, .tryit ul { margin-bottom: 0; }
+.tryit li { margin-bottom: 0.5em; }
+
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ * TAG BADGES
+ *
+ * Those little clickable pills you see on blog posts. They link to
+ * tag pages (like /blog/basics). Rendered in _/content.md.
+ * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ */
+.tag-badge {
+  display: inline-block;
+  padding: 0.2em 0.65em;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  text-decoration: none !important;
+  background: var(--color-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 99px;
+  color: var(--color-text-muted);
+  transition: all 0.2s ease;
+}
+
+.tag-badge:hover {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin-bottom: 1.5em;
+}
+
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ * PREV/NEXT NAVIGATION CARDS
+ *
+ * The cards at the bottom of tutorial posts that link to the previous
+ * and next posts. They use the `order` field in frontmatter to figure
+ * out which posts are adjacent. Rendered in _/content.md.
+ * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ */
+.nav-cards {
+  display: flex;
+  gap: 1em;
+  margin: 3em 0 1em;
+}
+
+.nav-card {
+  flex: 1;
+  text-decoration: none !important;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 0.9em;
+  padding: 0.9em 1.1em;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s ease;
+}
+
+.nav-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 3px 12px rgba(181, 80, 122, 0.12);
+  transform: translateY(-1px);
+}
+
+.nav-card-next {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.nav-card-spacer {
+  flex: 1;
+}
+
+.nav-card-title {
+  font-weight: 600;
+  font-size: 0.95em;
+  color: var(--color-primary);
+  margin-bottom: 0.15em;
+}
+
+.nav-card-desc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.nav-card-arrow {
+  font-size: 1.3em;
+  color: var(--color-primary);
+  font-weight: 300;
+}
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ * STICKY FOOTER
+ *
+ * I'm making the footer stick to the bottom of the page here, even
+ * when there's not much content.
+ *
+ * The trick: body is a flex column with min-height 100dvh, and main
+ * grows to fill available space (`flex: 1 0 auto`), pushing the footer
+ * down. On short pages, the footer stays at the viewport bottom instead
+ * of floating in the middle.
+ *
+ * I use `100dvh` which handles mobile browser UI better than `100vh`.
+ * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
  */
 body {
   box-sizing: border-box;
@@ -75,264 +319,246 @@ main {
 
 footer {
   flex-shrink: 0;
+  margin-top: 3em;
+  padding-top: 1.5em;
+  border-top: 1px solid var(--color-border-light);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
 
-  a {
-    text-decoration: none;
-  }
+footer p { margin-bottom: 0.5em; }
+footer a { font-weight: 500; background: none; }
+footer a:hover { background: none; text-decoration: underline; }
+
+/* Header */
+header {
+  margin-bottom: 0.5em;
+}
+
+header p {
+  margin-bottom: 0.8em;
+}
+
+header strong {
+  font-size: 1.2em;
+  letter-spacing: -0.02em;
 }
 
 
 
-
-
-/* 
+/*
  * (っ◕‿◕)っ
  *
- * That is it for the special Hugs specific styling gotchas.
+ * That's it for the Hugs-specific styling!
  *
- * Below is the default theme (Sakura.css) which is not Hugs specific.
+ * Below is the base theme — standard HTML element styling.
+ * It's based on Sakura.css with rose-tinted colors and Inter font.
+ * Nothing Hugs-specific here, just good defaults.
  */
 
-/* Sakura.css v1.5.1
- * ================
- * Minimal css theme.
- * Project: https://github.com/oxalorg/sakura/
+
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+ * BASE THEME
+ *
+ * Modified from Sakura.css v1.5.1
+ * https://github.com/oxalorg/sakura/
+ * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
  */
-/* Body */
+
 html {
   font-size: 62.5%;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  font-family: var(--font-sans);
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
 }
 
 body {
-  font-size: 1.8rem;
-  line-height: 1.618;
-  max-width: 38em;
+  font-size: var(--font-size-base);
+  font-weight: 400;
+  line-height: var(--line-height);
+  max-width: var(--max-width);
   margin: auto;
-  color: #4a4a4a;
-  background-color: #f9f9f9;
-  padding: 13px;
+  color: var(--color-text);
+  background-color: var(--color-background);
+  padding: 2rem 2.5rem;
 }
 
 @media (max-width: 684px) {
-  body {
-    font-size: 1.53rem;
-  }
+  body { font-size: 1.5rem; padding: 1.5rem; }
 }
+
 @media (max-width: 382px) {
-  body {
-    font-size: 1.35rem;
-  }
+  body { font-size: 1.4rem; padding: 1rem; }
 }
+
+/* Headings */
 h1, h2, h3, h4, h5, h6 {
-  line-height: 1.1;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-  font-weight: 700;
-  margin-top: 3rem;
-  margin-bottom: 1.5rem;
-  overflow-wrap: break-word;
-  word-wrap: break-word;
-  -ms-word-break: break-all;
-  word-break: break-word;
+  line-height: 1.3;
+  font-weight: 600;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  letter-spacing: -0.02em;
 }
 
-h1 {
-  font-size: 2.35em;
-}
+h1 { font-size: 2em; font-weight: 700; margin-top: 0; }
+h2 { font-size: 1.5em; margin-top: 2.5rem; padding-bottom: 0.35em; border-bottom: 1px solid var(--color-border-light); }
+h3 { font-size: 1.2em; }
+h4 { font-size: 1.1em; }
+h5 { font-size: 1em; }
+h6 { font-size: var(--font-size-sm); color: var(--color-text-muted); }
 
-h2 {
-  font-size: 2em;
-}
+/* Text */
+p { margin: 0 0 1.25rem 0; }
+strong, b { font-weight: 600; }
+small { font-size: var(--font-size-xs); }
 
-h3 {
-  font-size: 1.75em;
-}
-
-h4 {
-  font-size: 1.5em;
-}
-
-h5 {
-  font-size: 1.25em;
-}
-
-h6 {
-  font-size: 1em;
-}
-
-p {
-  margin-top: 0px;
-  margin-bottom: 2.5rem;
-}
-
-small, sub, sup {
-  font-size: 75%;
-}
-
-hr {
-  border-color: #1d7484;
-}
-
+/* Links */
 a {
-  color: #1d7484;
-  border-bottom: 2px solid transparent;
+  color: var(--color-primary);
+  text-decoration: none;
+  background-image: linear-gradient(var(--color-primary), var(--color-primary));
+  background-size: 0% 1px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
 }
-a:visited {
-  color: #144f5a;
-}
+
 a:hover {
-  color: #982c61;
-  border-bottom: 2px solid #4a4a4a;
+  color: var(--color-primary-hover);
+  background-size: 100% 1px;
 }
 
-ul {
-  padding-left: 1.4em;
-  margin-top: 0px;
-  margin-bottom: 2.5rem;
-}
+/* Lists */
+ul, ol { padding-left: 1.4em; margin: 0 0 1.25rem 0; }
+li { margin-bottom: 0.35em; }
 
-li {
-  margin-bottom: 0.4em;
-}
-
+/* Blockquotes */
 blockquote {
-  margin-left: 0px;
-  margin-right: 0px;
-  padding-left: 1em;
-  padding-top: 0.8em;
-  padding-bottom: 0.8em;
-  padding-right: 0.8em;
-  border-left: 5px solid #1d7484;
-  margin-bottom: 2.5rem;
-  background-color: #f1f1f1;
+  margin: 0 0 1.5rem 0;
+  padding: 1.2em 1.4em;
+  border-left: 3px solid var(--color-primary);
+  background: var(--color-secondary);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-style: italic;
+  color: var(--color-text-muted);
 }
 
-blockquote p {
-  margin-bottom: 0;
-}
+blockquote p { margin-bottom: 0; }
 
-img, video {
-  height: auto;
-  max-width: 100%;
-  margin-top: 0px;
-  margin-bottom: 2.5rem;
-}
-
-/* Pre and Code */
+/* Code */
 pre {
-  background-color: #f1f1f1;
-  display: block;
-  padding: 1em;
+  background: var(--color-code-bg);
+  border: 1px solid var(--color-code-border);
+  border-radius: var(--radius);
+  padding: 1em 1.25em;
   overflow-x: auto;
-  margin-top: 0px;
-  margin-bottom: 2.5rem;
-  font-size: 0.9em;
+  margin: 0 0 1.5rem 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  box-shadow: var(--shadow-sm);
 }
 
-code, kbd, samp {
+code, kbd {
+  font-family: var(--font-mono);
   font-size: 0.9em;
-  padding: 0 0.5em;
-  background-color: #f1f1f1;
-  white-space: pre-wrap;
+  padding: 0.15em 0.4em;
+  background: var(--color-code-bg);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-light);
 }
 
 pre > code {
   padding: 0;
-  background-color: transparent;
-  white-space: pre;
-  font-size: 1em;
+  background: transparent;
+  border: none;
+  font-size: 0.95em;
 }
 
 /* Tables */
 table {
-  text-align: justify;
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 2rem;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-border);
 }
 
-td, th {
-  padding: 0.5em;
-  border-bottom: 1px solid #f1f1f1;
-}
-
-/* Buttons, forms and input */
-input, textarea {
-  border: 1px solid #4a4a4a;
-}
-input:focus, textarea:focus {
-  border: 1px solid #1d7484;
-}
-
-textarea {
-  width: 100%;
-}
-
-.button, button,
-input[type=submit],
-input[type=reset],
-input[type=button],
-input[type=file]::file-selector-button {
-  display: inline-block;
-  padding: 5px 10px;
-  text-align: center;
-  text-decoration: none;
-  white-space: nowrap;
-  background-color: #1d7484;
-  color: #f9f9f9;
-  border-radius: 1px;
-  border: 1px solid #1d7484;
-  cursor: pointer;
-  box-sizing: border-box;
-}
-.button:hover, button:hover,
-input[type=submit]:hover,
-input[type=reset]:hover,
-input[type=button]:hover,
-input[type=file]::file-selector-button:hover {
-  background-color: #982c61;
-  color: #f9f9f9;
-  outline: 0;
-}
-
-.button[disabled], button[disabled],
-input[type=submit][disabled],
-input[type=reset][disabled],
-input[type=button][disabled],
-input[type=file][disabled] {
-  cursor: default;
-  opacity: 0.5;
-}
-.button:focus-visible, button:focus-visible,
-input[type=submit]:focus-visible,
-input[type=reset]:focus-visible,
-input[type=button]:focus-visible,
-input[type=file]:focus-visible {
-  outline-style: solid;
-  outline-width: 2px;
-}
-
-textarea, select, input {
-  color: #4a4a4a;
-  padding: 6px 10px; /* The 6px vertically centers text on FF, ignored by Webkit */
-  margin-bottom: 10px;
-  background-color: #f1f1f1;
-  border: 1px solid #f1f1f1;
-  border-radius: 4px;
-  box-shadow: none;
-  box-sizing: border-box;
-}
-textarea:focus, select:focus, input:focus {
-  border: 1px solid #1d7484;
-  outline: 0;
-}
-
-input[type=checkbox]:focus {
-  outline: 1px dotted #1d7484;
-}
-
-label, legend, fieldset {
-  display: block;
-  margin-bottom: 0.5rem;
+th {
+  text-align: left;
   font-weight: 600;
+  padding: 0.9em 1.2em;
+  background: var(--color-secondary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+td {
+  padding: 0.85em 1.2em;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #fdfbfc; }
+
+/* Images */
+img, video {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+
+/* Horizontal rule */
+hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-border), transparent);
+  margin: 3rem 0;
+}
+
+/* Selection */
+::selection {
+  background: rgba(181, 80, 122, 0.15);
+}
+
+/* Focus for accessibility */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Forms */
+input, textarea, select {
+  font-family: var(--font-sans);
+  font-size: 1em;
+  padding: 0.6em 0.8em;
+  background: var(--color-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--color-primary);
+  outline: none;
+}
+
+/* Buttons */
+button, .button {
+  font-family: var(--font-sans);
+  font-size: 0.95em;
+  font-weight: 500;
+  padding: 0.7em 1.4em;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-hover));
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 2px 4px rgba(181, 80, 122, 0.2);
+}
+
+button:hover, .button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(181, 80, 122, 0.3);
 }

@@ -2,43 +2,51 @@
 title: Config File
 description: Site settings and metadata
 order: 1
+tags:
+  - basics
 ---
 
-Every Hugs site has a `config.toml` file in its root folder. This is where you set site-wide settings like your site's title, description, and URL.
+### Your site's control center
 
-### Where It Lives
+Every Hugs site starts with a `config.toml` file in the root folder. This is where your site gets its identity — the name, description, and all those little details that show up in browser tabs and search results.
 
 ```
 your-site/
-├── config.toml    ← This file!
+├── config.toml    ← Right here
 ├── index.md
 ├── about.md
 └── _/
     └── ...
 ```
 
-### The Basics
+Open yours up. You'll see something like this:
 
-Open your `config.toml` and you'll see something like this:
-
+{% raw %}
 ```toml
 [site]
-title = "My Hugs Site"
-description = "A site built with Hugs"
+title = "Hugs Documentation"
+description = "Learn how to build sites with Hugs"
 url = "https://example.com"
-author = "Your Name"
+author = "Hugs"
 ```
+{% endraw %}
 
-Each of these values gets used when building your site:
+These four lines do a lot:
 
-- **`title`** - Appears in browser tabs and search results
-- **`description`** - Used in meta tags for SEO and social sharing
-- **`url`** - Your site's full URL (important for feeds and social cards)
-- **`author`** - Your name, used in meta tags and feeds
+- **`title`** shows up in browser tabs and search results
+- **`description`** appears in search previews and social shares
+- **`url`** is your site's home address (needed for feeds and social cards)
+- **`author`** is you
 
-### Optional Fields
+{% call tryit() %}
+Change the `title` to something fun. Save. Watch the browser tab update.
+{% endcall %}
 
-There are a few more fields you can add to the `[site]` section:
+> **Tip:** The `url` field matters for production — it's used to generate absolute URLs in RSS feeds and social meta tags. During local development, Hugs handles this automatically.
+
+### A few more options
+
+You can extend the `[site]` section with some extras:
 
 {% raw %}
 ```toml
@@ -47,18 +55,18 @@ title = "My Hugs Site"
 description = "A site built with Hugs"
 url = "https://example.com"
 author = "Your Name"
-language = "en-us"                              # Language code (default: "en-us")
-twitter_handle = "@yourname"                    # For Twitter/X cards
-default_image = "/og.png"                       # Default image for social sharing
-title_template = "{{ title }} | {{ site.title }}" # Template for page titles
+language = "en-us"                              # default
+twitter_handle = "@yourname"                    # for Twitter/X cards
+default_image = "/og.png"                       # fallback social image
+title_template = "{{ title }} | {{ site.title }}" # how page titles look
 ```
 {% endraw %}
 
-### Title Templates
+### Making page titles consistent
 
-By default, page titles are exactly what you put in the frontmatter. But often you want titles like "About | My Site" instead of just "About".
+By default, a page's title is exactly what you set in frontmatter. But you probably want "About | My Site" instead of just "About".
 
-The `title_template` field lets you customize how titles are formatted:
+That's what `title_template` does:
 
 {% raw %}
 ```toml
@@ -68,62 +76,52 @@ title_template = "{{ title }} | {{ site.title }}"
 ```
 {% endraw %}
 
-With this config, a page with `title: About` will display as "About | My Site" in:
-- The browser tab (`<title>` tag)
-- Social sharing cards (`og:title` and `twitter:title`)
+Now a page with `title: About` shows as "About | My Site" — in the browser tab, in social cards, everywhere.
 
-Two variables are available in your template:
-- **`title`** - The page's title from its frontmatter
-- **`site.title`** - Your site's title from config.toml
+You have two variables to work with:
+- **`title`** — the page's title from frontmatter
+- **`site.title`** — your site title from config
 
-Some example templates:
+A few patterns:
 
 {% raw %}
 ```toml
 # Site name after (most common)
 title_template = "{{ title }} | {{ site.title }}"
-# Result: "About | My Site"
+# → "About | My Site"
 
-# Site name before
+# Site name first
 title_template = "{{ site.title }} - {{ title }}"
-# Result: "My Site - About"
+# → "My Site - About"
 
-# Just the page title (same as no template)
+# Just the page title
 title_template = "{{ title }}"
-# Result: "About"
+# → "About"
 ```
 {% endraw %}
 
-### Build Settings
+### Build settings
 
-You can also configure how Hugs builds your site:
+There's also a `[build]` section for controlling how Hugs generates your site:
 
 ```toml
 [build]
-minify = true         # Minify HTML and CSS (default: true)
-reading_speed = 200   # Words per minute for readtime() (default: 200)
+minify = true         # compress HTML and CSS (on by default)
+reading_speed = 200   # words per minute for readtime()
 
 [build.syntax_highlighting]
-enabled = true           # Enable code highlighting (default: true)
-theme = "one-dark-pro"   # Color theme for code blocks
+enabled = true           # code highlighting (on by default)
+theme = "one-dark-pro"   # pick your color scheme
 ```
 
-### Using Config Values in Templates
+### Using config in your pages
 
-You can access these values in your markdown files using template syntax:
+You can pull these values into any page:
 
 ```markdown
 {% raw %}Welcome to {{ site.title }}!{% endraw %}
 ```
 
-This makes it easy to reference your site's name without hardcoding it everywhere.
-
-### Try It!
-
-1. Open your `config.toml`
-2. Change the `title` to something fun
-3. Watch the browser tab update (live reload!)
+Change the name once in config, and it updates everywhere.
 
 ---
-
-Next up: [Pages & Frontmatter](/blog/pages-and-frontmatter) - learn how to configure individual pages.

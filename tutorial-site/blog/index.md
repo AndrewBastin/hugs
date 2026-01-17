@@ -3,20 +3,27 @@ title: Blog
 description: Learn Hugs features through tutorial posts
 ---
 
-## Welcome to the Blog
+# Explore blogs
 
-I'm `blog/index.md`, and I live in the `blog/` folder. Any markdown file you put next to me becomes a blog post - `my-post.md` becomes `/blog/my-post`. The list below updates automatically when you add new posts!
+A portfolio or a personal website is somewhat incomplete without a blog. 
+This is where you can share your thoughts, experiences, and knowledge with the world. 
 
-These posts are a tutorial series. Each one teaches a Hugs feature in depth. Read them in order, or jump to whatever interests you.
+You're in the `blog/` folder. This file — `index.md` — is what shows up when you visit `/blog`. 
+Every other markdown file here becomes a post: `my-post.md` turns into `/blog/my-post`.
 
----
+Work through the tutorial posts on everything you need to know about **Hugs** in order, or pick what you need. Each one builds on the last, but they stand alone too.
 
-### Tutorial Posts
+
+## Tutorial Posts
 
 {% for post in pages(within="/blog") | sort(attribute="order") %}
-- [{{ post.title }}]({{ post.url }}) - {{ post.description }}
-{% endfor %}
+{% if post.order %}- [{{ post.title }}]({{ post.url }}) — {{ post.description }}
+{% endif %}{% endfor %}
 
----
 
-Ready to dive in? Start with [Config File](/blog/config) to learn about site settings.
+## Browse by topic
+
+[basics](/blog/basics) · [templates](/blog/templates) · [styling](/blog/styling) · [publishing](/blog/publishing)
+
+
+Start with [Config File](/blog/config) — it's where everything begins.

@@ -1,14 +1,14 @@
 ---
 title: Syntax Highlighting
 description: Pretty code blocks
-order: 5
+order: 6
+tags:
+  - styling
 ---
 
-Code blocks in Hugs automatically get syntax highlighting. Just specify the language, and your code looks great.
+### Code that looks good
 
-### Basic Usage
-
-Add a language identifier after the opening triple backticks:
+Add a language after the triple backticks, and Hugs handles the rest:
 
 ~~~markdown
 ```rust
@@ -18,7 +18,7 @@ fn main() {
 ```
 ~~~
 
-This renders as:
+Renders as:
 
 ```rust
 fn main() {
@@ -26,22 +26,21 @@ fn main() {
 }
 ```
 
-### Supported Languages
+### Languages
 
-Hugs uses [giallo](https://github.com/getzola/giallo) for syntax highlighting, which supports most popular languages including:
+Hugs uses [giallo](https://github.com/getzola/giallo) and supports most languages you'd expect:
 
 - **Web**: `html`, `css`, `javascript`, `typescript`, `jsx`, `tsx`, `json`
 - **Backend**: `rust`, `go`, `python`, `ruby`, `java`, `c`, `cpp`
 - **Shell**: `bash`, `shell`, `zsh`, `fish`
 - **Config**: `toml`, `yaml`, `xml`, `ini`
-- **Markup**: `markdown`, `latex`
-- **And many more**: `sql`, `graphql`, `dockerfile`, `make`, `lua`, `swift`, `kotlin`...
+- **And more**: `sql`, `graphql`, `dockerfile`, `make`, `lua`, `swift`, `kotlin`...
 
-If a language isn't recognized, the code block displays without highlighting.
+Unrecognized languages display without highlighting.
 
-### Configuration
+### Pick a theme
 
-Syntax highlighting is enabled by default. Configure it in `config.toml`:
+Highlighting is on by default. Change the theme in `config.toml`:
 
 ```toml
 [build.syntax_highlighting]
@@ -49,57 +48,27 @@ enabled = true
 theme = "one-dark-pro"
 ```
 
-### Available Themes
+**Dark themes:** `one-dark-pro` (default), `dracula`, `github-dark`, `tokyo-night`, `catppuccin-mocha`, `nord`, `gruvbox-dark-medium`, `rose-pine`
 
-Hugs includes 60+ themes. Here are some popular choices:
+**Light themes:** `one-light`, `github-light`, `catppuccin-latte`, `solarized-light`, `gruvbox-light-medium`, `rose-pine-dawn`
 
-**Dark themes:**
-- `one-dark-pro` (default)
-- `dracula`
-- `github-dark`
-- `tokyo-night`
-- `catppuccin-mocha`
-- `nord`
-- `gruvbox-dark-medium`
-- `rose-pine`
+60+ themes available — see the [giallo theme gallery](https://github.com/getzola/giallo) for the full list.
 
-**Light themes:**
-- `one-light`
-- `github-light`
-- `catppuccin-latte`
-- `solarized-light`
-- `gruvbox-light-medium`
-- `rose-pine-dawn`
+### Under the hood
 
-For the full list of 60+ themes, see the [giallo theme gallery](https://github.com/getzola/giallo).
+Hugs generates `/highlight.css` with your theme's colors and includes it automatically. Nothing to configure.
 
-### How It Works
-
-When you build your site, Hugs:
-
-1. Parses code blocks with language tags
-2. Applies syntax highlighting using tree-sitter grammars
-3. Generates CSS for your chosen theme at `/highlight.css`
-4. The CSS is automatically included in your pages
-
-You don't need to do anything special - it just works.
-
-### Disabling Highlighting
-
-If you prefer unstyled code blocks, disable highlighting:
+To disable highlighting entirely:
 
 ```toml
 [build.syntax_highlighting]
 enabled = false
 ```
 
-### Try It!
-
-1. Open `config.toml` in your site
-2. Add a `[build.syntax_highlighting]` section
-3. Try `theme = "dracula"` or `theme = "github-dark"`
-4. Refresh your browser to see the new colors
+{% call tryit() %}
+1. Open `config.toml`
+2. Set `theme = "dracula"` under `[build.syntax_highlighting]`
+3. Refresh — new colors
+{% endcall %}
 
 ---
-
-Next up: [Theming & CSS](/blog/theming) - customize your site's look and feel.

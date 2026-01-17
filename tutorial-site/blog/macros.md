@@ -1,33 +1,29 @@
 ---
 title: Macros
 description: Build reusable components for your pages
-order: 4.5
+order: 5
+tags:
+  - templates
 ---
 
-Macros let you create **reusable template components**. Define them once, use them everywhere - perfect for cards, callouts, buttons, or any repeated pattern on your site.
+### Write once, use everywhere
 
-### Creating a Macro
+Find yourself copying the same card layout or callout box across pages? That's what macros fix. Define a component once, then drop it anywhere.
 
-Macros live in the `_/macros/` directory. Each `.md` file becomes a macro:
+Macros live in `_/macros/`. The filename becomes the macro name:
 
 {% raw %}
 ```
-_/
-├── macros/
-│   ├── note.md      → {% call note() %}...{% endcall %}
-│   ├── card.md      → {% call card() %}...{% endcall %}
-│   └── button.md    → {% call button() %}...{% endcall %}
-├── header.md
-├── footer.md
-└── nav.md
+_/macros/
+├── note.md      → {% call note() %}...{% endcall %}
+├── card.md      → {% call card() %}...{% endcall %}
+└── button.md    → {% call button() %}...{% endcall %}
 ```
 {% endraw %}
 
-The filename becomes the macro name - `note.md` creates a macro called `note`.
+### A simple example
 
-### Basic Example
-
-Here's a simple callout macro. Create `_/macros/note.md`:
+Create `_/macros/note.md`:
 
 {% raw %}
 ```jinja
@@ -38,11 +34,9 @@ type: "info"
 ```
 {% endraw %}
 
-That's it! The **frontmatter** defines parameters with default values, and **`caller()`** is where the content you pass in will appear.
+Frontmatter defines parameters (with defaults). `caller()` is where your content goes.
 
-### Using Macros
-
-Use the `{% raw %}{% call %}{% endraw %}` syntax to invoke a macro:
+Now use it:
 
 {% raw %}
 ```jinja
@@ -52,7 +46,7 @@ Remember to save your work frequently!
 ```
 {% endraw %}
 
-This outputs a blockquote with "INFO" as the default type. Pass a different value to customize it:
+Override the default:
 
 {% raw %}
 ```jinja
@@ -62,26 +56,9 @@ This action cannot be undone.
 ```
 {% endraw %}
 
-### Markdown Works Everywhere
+### Markdown works inside macros
 
-Both the **macro body** and the **content you pass in** support full markdown. Macros are processed during template rendering, which happens *before* markdown conversion.
-
-Your macro can output markdown:
-
-{% raw %}
-```markdown
----
-title: ""
----
-### {{ title }}
-
-{{ caller() }}
-
----
-```
-{% endraw %}
-
-And the content you pass in can use markdown too:
+Both the macro body and the content you pass in support full markdown — macros run before markdown conversion.
 
 {% raw %}
 ```jinja
@@ -93,9 +70,9 @@ And the content you pass in can use markdown too:
 ```
 {% endraw %}
 
-### Parameters
+### Parameters with defaults
 
-Frontmatter values become parameters with defaults:
+Every frontmatter field becomes a parameter. The value you set is the default — used when the caller doesn't specify one.
 
 {% raw %}
 ```markdown
@@ -110,44 +87,30 @@ disabled: false
 ```
 {% endraw %}
 
-When calling the macro:
-- Omit a parameter to use its default
-- Pass a value to override the default
+This macro has three parameters: `type` defaults to `"primary"`, `size` to `"medium"`, `disabled` to `false`.
+
+When you call it, you can override any of them:
 
 {% raw %}
 ```jinja
 {% call button() %}Click me{% endcall %}
+<!-- uses all defaults: type="primary", size="medium", disabled=false -->
+
 {% call button(type="danger", size="large") %}Delete{% endcall %}
+<!-- overrides type and size, disabled stays false -->
+
 {% call button(disabled=true) %}Unavailable{% endcall %}
+<!-- only overrides disabled -->
 ```
 {% endraw %}
 
-### Accessing Page Variables
+### Page variables are available
 
-Macros can access variables from your page. If your page frontmatter has:
+Macros can access the page's frontmatter. If your page has `author: Jane`, your macro can use `{{ author }}`.
 
-```yaml
----
-title: My Post
-author: Jane
----
-```
+### Putting it together: a card component
 
-Your macro can use those variables:
-
-{% raw %}
-```markdown
----
----
-Written by **{{ author }}** for *{{ title }}*
-
-{{ caller() }}
-```
-{% endraw %}
-
-### Practical Example: Card Component
-
-Here's a card macro that combines several features. Create `_/macros/card.md`:
+`_/macros/card.md`:
 
 {% raw %}
 ```markdown
@@ -164,26 +127,22 @@ variant: "default"
 ```
 {% endraw %}
 
-Use it throughout your site:
+Use it:
 
 {% raw %}
 ```jinja
 {% call card(title="Getting Started", variant="featured") %}
-Welcome to the documentation! This guide will help you
-get up and running in minutes.
+Welcome! This guide gets you up and running in minutes.
 
 [Read more →](/docs/getting-started)
 {% endcall %}
 ```
 {% endraw %}
 
-### Try It!
-
+{% call tryit() %}
 1. Create `_/macros/` directory in your site
-2. Add a simple macro like the `note.md` example above
+2. Add the `note.md` example above
 3. Use `{% raw %}{% call note() %}Your message{% endcall %}{% endraw %}` in any page
-4. Experiment with parameters and markdown content
+{% endcall %}
 
 ---
-
-Next up: [Syntax Highlighting](/blog/syntax-highlighting) - make your code blocks look great.

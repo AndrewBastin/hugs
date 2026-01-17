@@ -1,72 +1,54 @@
 ---
 title: Theming & CSS
 description: Customizing your site's look and feel
-order: 6
+order: 7
+tags:
+  - styling
 ---
 
-Your site's appearance is controlled by files in the `_/` folder. This special folder contains everything that's **shared across all pages** - your theme, header, navigation, and footer.
+### The `_/` folder
 
-### The `_/` Folder
+Everything shared across pages lives here:
 
 ```
 _/
-├── theme.css   → Your site's styles
-├── header.md   → Content above the nav (logo, site name)
-├── nav.md      → Navigation links
-├── content.md  → Content area template (optional)
-└── footer.md   → Content at the bottom of every page
+├── theme.css   → your styles
+├── header.md   → top of every page (logo, site name)
+├── nav.md      → navigation links
+├── content.md  → wraps page content (optional)
+└── footer.md   → bottom of every page
 ```
 
-Files in this folder don't become pages themselves. Instead, they're **injected into every page** your site generates.
+These files don't become pages — they're injected into every page.
 
-### Header, Nav, and Footer
+### Header, nav, footer
 
-These three markdown files control the persistent elements of your site:
+Three markdown files that show up everywhere:
 
-**`_/header.md`** - Appears at the very top of every page. Great for your site logo or name:
-
+**`_/header.md`** — the very top:
 ```markdown
-<div style="display: flex; justify-content: space-between;">
-  <strong>My Site</strong>
-  <span>A tagline here</span>
-</div>
+**My Site** — A tagline here
 ```
 
-**`_/nav.md`** - Your navigation links, appearing below the header:
-
+**`_/nav.md`** — your navigation:
 ```markdown
 [Home](/)
 [About](/about)
 [Blog](/blog)
 ```
 
-Just write markdown links - they render inline as your navigation menu.
-
-**`_/content.md`** - Controls how the main content area is rendered. This is optional - if not present, Hugs just renders your page content directly. But with it, you can wrap content with custom markup, conditionally show titles, or add consistent elements to all pages.
-
-**`_/footer.md`** - Appears at the bottom of every page:
-
+**`_/footer.md`** — the bottom:
 ```markdown
-<center>
-  Built with [Hugs](https://github.com/AndrewBastin/hugs)
-</center>
+Built with [Hugs](https://github.com/AdrianBastin/hugs)
 ```
 
-All three files support both markdown and HTML. Edit them and see changes on every page instantly.
+All support markdown and HTML. Edit any of them — changes show up everywhere instantly.
 
-### The Content Template
+### The content template
 
-The `_/content.md` file deserves special attention. It's a **Jinja template** that controls how your page content is rendered within the `<main>` element.
+`_/content.md` wraps your page content. Without it, Hugs just renders your content directly. With it, you control the structure.
 
-If you don't have a `_/content.md` file, Hugs defaults to simply rendering:
-
-{% raw %}
-```jinja
-{{ content }}
-```
-{% endraw %}
-
-But you can customize it to add structure around your content. Here's what this tutorial site uses:
+This site uses it to show titles only on blog posts, and to add the previous/next navigation at the bottom of each tutorial:
 
 {% raw %}
 ```jinja
@@ -78,221 +60,100 @@ But you can customize it to add structure around your content. Here's what this 
 ```
 {% endraw %}
 
-This shows the page title as an `<h1>` only on blog posts (pages whose path starts with "blog "), but not on other pages like the homepage or about page.
+Variables you can use: `content`, `title`, `path_class` (space-separated URL path like `blog macros`), plus any frontmatter fields.
 
-**Available variables in `_/content.md`:**
-
-- `content` - The rendered HTML content of your page
-- `title` - The page title from frontmatter
-- `path_class` - Space-separated URL path (e.g., `blog macros` for `/blog/macros`)
-- `base` - Base path for relative URLs
-- `seo` - SEO context object with `canonical_url`, `og_title`, etc.
-- All custom frontmatter fields from the page (like `order`, `tags`, etc.)
-
-**Example: Different layouts for different sections**
+Different layouts for different sections:
 
 {% raw %}
 ```jinja
 {% if path_class is startingwith("blog ") %}
-<article>
-# {{ title }}
-{{ content }}
-</article>
+<article>{{ content }}</article>
 {% elif path_class is startingwith("docs ") %}
-<div class="docs-content">
-{{ content }}
-</div>
+<div class="docs-content">{{ content }}</div>
 {% else %}
 {{ content }}
 {% endif %}
 ```
 {% endraw %}
 
-**Example: Add consistent elements to all pages**
+### Page structure
 
-{% raw %}
-```jinja
-{{ content }}
-
----
-*Last updated: {{ date | default("Unknown") }}*
-```
-{% endraw %}
-
-### The HTML Structure
-
-Every page Hugs generates has the same structure:
+Every page Hugs generates:
 
 ```html
 <body hg-path="blog my-post">
   <header>...</header>
   <nav>...</nav>
-  <main>
-    <!-- content from _/content.md template -->
-  </main>
+  <main>...</main>
   <footer>...</footer>
 </body>
 ```
 
-This gives you clear hooks for styling: `header`, `nav`, `main`, `footer`, and the content within them.
-
-### The `hg-path` Attribute
-
-Hugs adds the `hg-path` attribute to `<body>`. This is a space-separated version of the page's URL path, so `/blog/my-post` becomes `blog my-post`.
-
-Why space-separated instead of the actual path? CSS attribute selectors treat spaces as word boundaries. This means you can use `[hg-path~="blog"]` to match any page that has "blog" as a path segment, rather than relying on substring matching which could produce false positives.
-
-### Conditional Styling with `hg-path`
-
-The `hg-path` attribute enables page-specific styling using CSS attribute selectors:
+The `hg-path` attribute is the URL path with slashes replaced by spaces. Use it for page-specific CSS:
 
 ```css
-/* Style only the homepage */
-[hg-path=""] main {
-  text-align: center;
-}
+/* Homepage only */
+[hg-path=""] main { text-align: center; }
 
-/* Style all blog pages (path starts with "blog") */
-[hg-path^="blog"] {
-  background-color: #fafafa;
-}
+/* All blog pages */
+[hg-path^="blog"] { background-color: #f9f5f6; }
 
-/* Style a specific page */
-[hg-path="about"] h1 {
-  color: #1d7484;
+/* Specific page */
+[hg-path="about"] h1 { color: #c9618a; }
+```
+
+### The default theme
+
+Your site starts with a modified version of [Sakura](https://github.com/oxalorg/sakura/), a classless CSS theme with rose-tinted accents, the [Inter](https://rsms.me/inter/) font, and modern refinements. It styles HTML elements directly — no special classes needed.
+
+The theme uses CSS variables — edit the `:root` block at the top of `_/theme.css`:
+
+```css
+:root {
+  --color-primary: #b5507a;      /* links, accents */
+  --color-background: #fefefe;   /* page background */
+  --color-text: #1a1a1a;         /* body text */
+  --color-text-muted: #555555;   /* secondary text */
+  --color-secondary: #f9f5f6;    /* code blocks, cards */
+  --color-border: #d4c4ca;       /* borders */
+  --font-sans: "Inter", system-ui, sans-serif;
+  --max-width: 42em;             /* content width */
 }
 ```
 
-### The Default Theme
-
-Your site comes with [Sakura](https://github.com/oxalorg/sakura/), a minimal classless CSS theme. It styles standard HTML elements without requiring any special classes.
-
-Key customization points:
+Or override specific elements:
 
 ```css
-/* Main colors */
-body {
-  color: #4a4a4a;           /* Text color */
-  background-color: #f9f9f9; /* Background */
-}
+/* Dark theme */
+body { color: #e0e0e0; background-color: #1a1a1a; }
+a { color: #f0a0c0; }
 
-a {
-  color: #1d7484;           /* Link color */
-}
+/* Wider content */
+body { max-width: 50em; }
 
-a:hover {
-  color: #982c61;           /* Link hover */
-}
-
-/* Typography */
-html {
-  font-size: 62.5%;         /* Base size (makes rem calc easy) */
-}
-
-body {
-  font-size: 1.8rem;        /* Content text size */
-  line-height: 1.618;       /* Golden ratio line height */
-  max-width: 38em;          /* Content width */
-}
+/* Different font */
+html { font-family: Georgia, serif; }
 ```
 
-### Common Customizations
+### Code block styling
 
-**Change the color scheme:**
-
-```css
-body {
-  color: #e0e0e0;
-  background-color: #1a1a1a;
-}
-
-a { color: #6db3f2; }
-a:visited { color: #b794f4; }
-a:hover { color: #f687b3; }
-```
-
-**Adjust content width:**
+Syntax highlighting generates `/highlight.css` automatically. To style the blocks themselves:
 
 ```css
-body {
-  max-width: 50em;  /* Wider content area */
-}
-```
-
-**Change fonts:**
-
-```css
-html {
-  font-family: Georgia, serif;
-}
-
-h1, h2, h3, h4, h5, h6 {
-  font-family: 'Helvetica Neue', sans-serif;
-}
-```
-
-**Style the navigation:**
-
-```css
-nav > p {
-  display: flex;
-  gap: 1.5rem;
-}
-
-nav a {
-  font-weight: 600;
-}
-```
-
-**Sticky footer:**
-
-```css
-body {
-  min-height: 100dvh;
-  display: flex;
-  flex-direction: column;
-}
-
-main { flex: 1 0 auto; }
-footer { flex-shrink: 0; }
-```
-
-### Adding Custom CSS
-
-The `_/theme.css` file is the only CSS file Hugs loads automatically. To add more styles:
-
-1. **Edit `_/theme.css` directly** - simplest approach, keep everything in one file
-2. **Use CSS `@import`** - at the top of theme.css: `@import url('custom.css');`
-
-### Syntax Highlighting Styles
-
-If syntax highlighting is enabled, Hugs generates a separate `/highlight.css` file for code block colors. This is automatically included in your pages. To customize code block appearance beyond colors, add styles to your theme:
-
-```css
-pre {
-  border-radius: 8px;
-  padding: 1.5em;
-}
-
-code {
-  font-family: 'Fira Code', monospace;
-}
+pre { border-radius: 8px; padding: 1.5em; }
+code { font-family: 'Fira Code', monospace; }
 ```
 
 ### Tips
 
-- **Use browser dev tools** - Right-click and "Inspect" to see exactly what HTML Hugs generates
-- **Check `hg-path` values** - Inspect the `<body>` tag to see the exact path value for any page
-- **CSS is minified** - Don't worry about file size; Hugs minifies CSS in production builds
-- **Live reload works** - Edit theme.css and see changes instantly
+- **Browser dev tools** — inspect to see exact HTML structure
+- **Check `hg-path`** — look at `<body>` to see path values
+- **Live reload** — edit theme.css, see changes instantly
 
-### Try It!
-
-1. Open `_/theme.css` in your editor
-2. Find the `body` rule and change `background-color`
-3. Watch your browser update instantly
-4. Try adding a custom `_/content.md` that wraps your content in an `<article>` tag
+{% call tryit() %}
+1. Open `_/theme.css`
+2. Change `background-color` on `body`
+3. Watch your browser update
+{% endcall %}
 
 ---
-
-Next up: [Assets & Static Files](/blog/assets) - learn how to include images, CSS, and JavaScript.

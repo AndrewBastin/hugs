@@ -2,33 +2,34 @@
 title: Dynamic Page Paths
 description: How file paths become URLs
 order: 3
+tags:
+  - basics
+  - templates
 ---
 
-Every markdown file you create becomes a page on your site. But how does Hugs decide what URL each file gets? It's simpler than you might think.
+### File path = URL
 
-### The Basic Rule
-
-Your file path **is** your URL, minus the `.md` extension:
+Your file's location is its address. Drop the `.md`, and that's the URL:
 
 - `about.md` → `/about`
 - `contact.md` → `/contact`
 - `blog/config.md` → `/blog/config`
 
-That's it! **No routing config, no URL mapping** - just put the file where you want the page.
+No routing config. No URL mapping. Put the file where you want the page.
 
-### Index Files
+### Index files
 
-Files named `index.md` get special treatment - they **become the URL for their folder**:
+Files named `index.md` become the URL for their folder:
 
-- `index.md` → `/` (your homepage)
+- `index.md` → `/` (homepage)
 - `blog/index.md` → `/blog/`
 - `docs/getting-started/index.md` → `/docs/getting-started/`
 
-This lets you create section landing pages. The `blog/index.md` file in this tutorial is the main blog page that lists all posts.
+That's how you make section landing pages. The `blog/index.md` file you're reading from? It's the main blog page.
 
-### Nested Folders
+### Go as deep as you want
 
-Folders can go as deep as you need:
+Nest folders however you like:
 
 ```
 your-site/
@@ -42,13 +43,21 @@ your-site/
 │       └── getting-started.md    → /blog/tutorials/getting-started
 ```
 
-### Dynamic Pages
+### One file, many pages
 
-Here's where it gets interesting. Sometimes you want to generate **multiple pages from a single template** - like pages for each tag, author, or paginated lists.
+Say you're building a blog and want visitors to browse posts by topic. You'd need a page for each tag — `/blog/rust` shows all Rust posts, `/blog/web` shows web posts, and so on.
 
-Hugs uses **bracket notation** for dynamic pages. A file named `[slug].md` becomes a template that generates multiple pages.
+You could create each tag page by hand. But what happens when you add a new tag? Another file to maintain.
 
-For example, `blog/[tag].md` with this frontmatter:
+Hugs has a better way: **dynamic pages**. One template file generates multiple pages automatically.
+
+Here's how it works. Create a file with brackets in the name:
+
+```
+blog/[tag].md
+```
+
+The brackets tell Hugs "this is a template." The name inside (`tag`) becomes a variable. Now in the frontmatter, list the values you want pages for:
 
 {% raw %}
 ```markdown
@@ -59,21 +68,35 @@ tag:
   - web
   - tutorial
 ---
+
+{% for post in pages(within="/blog") %}
+...filter posts by tag here...
+{% endfor %}
 ```
 {% endraw %}
 
-This generates three pages:
-- `/blog/rust`
-- `/blog/web`
-- `/blog/tutorial`
+Hugs generates three pages from this one file:
+- `/blog/rust` (where `tag` = "rust")
+- `/blog/web` (where `tag` = "web")
+- `/blog/tutorial` (where `tag` = "tutorial")
 
-The parameter name inside the brackets (e.g., `tag`) **must match** a frontmatter field containing an array of values.
+The key: the bracket name (`[tag]`) must match a frontmatter field (`tag:`) that contains an array.
 
-**Note:** Dynamic brackets only work on markdown files, not folders. You can have `blog/[tag].md`, but not `[category]/post.md`.
+This pattern works for anything — author pages, category pages, year archives. One template, many pages.
 
-### Dynamic Values with Jinja
+One catch: brackets only work on filenames, not folders. `blog/[tag].md` works. `[category]/post.md` doesn't.
 
-You can also use Jinja expressions to generate values:
+### See it in action
+
+This site uses exactly this pattern. Each tutorial post has `tags` in its frontmatter, and `blog/[tag].md` generates a page for each topic:
+
+[basics](/blog/basics) · [templating](/blog/templating) · [styling](/blog/styling) · [publishing](/blog/publishing)
+
+Click any link — that's a dynamic page filtering posts by tag. One template, four URLs.
+
+### Generate values with Jinja
+
+You can use expressions too:
 
 {% raw %}
 ```markdown
@@ -84,22 +107,18 @@ page_no: "range(end=5)"
 ```
 {% endraw %}
 
-This generates pages `/1`, `/2`, `/3`, `/4`, `/5` (or wherever the file lives).
+That creates `/1`, `/2`, `/3`, `/4`, `/5`. More on expressions in [Templating](/blog/templating).
 
-For more on what you can do with Jinja expressions, see the [Templating](/blog/templating) post.
+### The special 404
 
-### Reserved File Names
+`[404].md` is reserved. It doesn't generate dynamic pages — Hugs turns it into `404.html` for when visitors hit a missing page.
 
-The `[404].md` filename is reserved for creating a custom 404 error page. Unlike other bracket files, it doesn't generate dynamic pages - instead, Hugs uses it to render a `404.html` file that hosts serve for missing pages.
+More on that in [Deployment](/blog/deployment).
 
-See [Deployment](/blog/deployment) for more on setting up custom 404 pages.
-
-### Try It!
-
+{% call tryit() %}
 1. Create a new file `docs.md` in your site root
 2. Add a title in the frontmatter
-3. Visit `/docs` in your browser - your new page is live!
+3. Visit `/docs` — your new page is live
+{% endcall %}
 
 ---
-
-Next up: [Templating](/blog/templating) - learn how to use variables and logic in your pages.

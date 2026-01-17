@@ -3,31 +3,27 @@ title: About
 description: Learn how pages work in Hugs
 ---
 
-## How Pages Work
+# How pages work
 
-I'm `about.md`, and I exist because someone created a file called `about.md` in the root folder. That's it - that's how pages work in Hugs!
+This page exists because there's a file called `about.md` in your site folder. That's how Hugs works — one markdown file, one page.
 
-**One markdown file = one page.** The file path becomes the URL:
+The file path becomes the URL:
 
 - `about.md` → `/about`
 - `contact.md` → `/contact`
 - `blog/hello.md` → `/blog/hello`
 
----
+## Creating a new page
 
-### Creating a New Page
+Want a new page? Create a new `.md` file.
 
-Want to add a page? Create a new `.md` file. Try it now:
-
+{% call tryit() %}
 1. Create a file called `hello.md` in your site folder
 2. Add some content (even just `# Hello!` works)
 3. Visit `/hello` in your browser
+{% endcall %}
 
-That's a new page! Easy, right ?
-
----
-
-### Adding to Navigation
+## Adding to navigation
 
 Your new page exists, but it's not in the nav yet. Open `_/nav.md` and you'll see:
 
@@ -37,7 +33,10 @@ Your new page exists, but it's not in the nav yet. Open `_/nav.md` and you'll se
 [Blog](/blog)
 ```
 
-Just add another link:
+These are just markdown links. The `_/nav.md` file is a shared component — it gets pulled into every page on your site, so any changes you make here show up everywhere.
+
+{% call tryit() %}
+Add your new link to `_/nav.md`:
 
 ```markdown
 [Home](/)
@@ -46,8 +45,9 @@ Just add another link:
 [Blog](/blog)
 ```
 
-Save, and your nav updates on every page.
+Save, and the nav updates across every page.
+{% endcall %}
 
 ---
 
-There is more to talk about! Head to the [Blog](/blog) section for more things in detail!
+Ready for more? The [Blog](/blog) section covers everything else in detail.

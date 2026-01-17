@@ -2,13 +2,15 @@
 title: Pages & Frontmatter
 description: The --- blocks at the top of files
 order: 2
+tags:
+  - basics
 ---
 
-Every markdown file in Hugs becomes a page on your site - with one exception. Files in the `_/` folder are special: they contain shared elements (header, nav, footer, theme) that appear on every page, not pages themselves. We'll cover those in [Theming & CSS](/blog/theming).
+### One file, one page
 
-For regular pages, each file starts with a special block called **frontmatter**. It's that bit between the `---` markers at the very top of each file.
+Every markdown file becomes a page on your site. The exception? Files in the `_/` folder — those are shared pieces (header, nav, footer) that show up everywhere. More on that in [Theming & CSS](/blog/theming).
 
-### What It Looks Like
+At the top of each page file, you'll see a block between `---` markers. That's **frontmatter** — metadata about the page.
 
 ```markdown
 ---
@@ -19,21 +21,18 @@ description: A brief description of this page
 # Your content starts here...
 ```
 
-The frontmatter uses YAML syntax - simple `key: value` pairs. Everything between the two `---` lines is metadata about the page. Everything after is your content.
+Simple `key: value` pairs. Everything between the dashes is about the page. Everything after is the page.
 
-### Built-in Fields
+### What Hugs knows about
 
-Hugs recognizes these frontmatter fields:
+A few fields have special meaning:
 
-- **`title`** (required) - The page title. Shows in browser tabs, search results, and social shares.
+- **`title`** — shows in browser tabs, search results, social shares. Required.
+- **`description`** — the summary that appears in search previews and link shares.
+- **`author`** — overrides the site-wide author for this page.
+- **`image`** — the preview image when someone shares your link on social media.
 
-- **`description`** (optional) - A brief summary. Used in meta tags for SEO and when people share your link on social media.
-
-- **`author`** (optional) - The page author. Overrides the site-wide author from `config.toml` for this specific page.
-
-- **`image`** (optional) - An image URL for social sharing. When someone shares your page on Twitter or Facebook, this image appears in the preview card.
-
-### Example with All Fields
+Put them together:
 
 ```markdown
 ---
@@ -46,11 +45,11 @@ image: /images/awesome-post-cover.png
 Your content here...
 ```
 
-### Custom Fields
+### Make up your own
 
-Here's the fun part - you can add **any fields you want** to frontmatter. Hugs passes them all through to templates.
+Here's where it gets interesting — you can add any field you want. Hugs passes everything through to templates.
 
-For example, blog posts in this tutorial use an `order` field:
+The posts in this tutorial use an `order` field:
 
 ```markdown
 ---
@@ -60,26 +59,24 @@ order: 1
 ---
 ```
 
-You could use custom fields for dates, tags, categories, authors - whatever your site needs. We'll cover how to access these in templates in the [Templating](/blog/templating) post.
+Dates, tags, categories, reading time — whatever your site needs. How to use them? That's in [Templating](/blog/templating).
 
-### How Fields Become Meta Tags
+### From frontmatter to meta tags
 
-Your frontmatter automatically generates proper HTML meta tags:
+Your fields automatically become proper HTML:
 
 - **`title`** → `<title>`, `og:title`, `twitter:title`
 - **`description`** → `<meta name="description">`, `og:description`
 - **`author`** → `<meta name="author">`
 - **`image`** → `og:image`, `twitter:image`
 
-This means your pages are SEO-ready and look great when shared on social media - no extra work needed. For more details on SEO and Open Graph tags, see the [SEO & Meta Tags](/blog/seo) post.
+SEO-ready, social-share-friendly, no extra work. More on this in [SEO & Meta Tags](/blog/seo).
 
-### Try It!
-
+{% call tryit() %}
 1. Open `about.md` in your site
 2. Add a `description` field to the frontmatter
 3. View source in your browser (Ctrl+U) and search for "description"
-4. See your text in the `<meta>` tags!
+4. Your text is now in the `<meta>` tags
+{% endcall %}
 
 ---
-
-Next up: [Dynamic Page Paths](/blog/dynamic-paths) - learn how file paths become URLs and how to create dynamic pages.

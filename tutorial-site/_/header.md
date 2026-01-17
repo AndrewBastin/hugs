@@ -8,7 +8,7 @@
   (っ◕‿◕)っ
 -->
 
-<div style="display: flex; justify-content: space-between;color: #0f434d; align-items: center; padding: 0.5em 0 1em 0;">
-  <strong style="font-size: 1.25em;">Hugs Documentation</strong>
-  <span>(っ◕‿◕)っ</span>
+<div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5em 0 0.75em 0;">
+  <strong>Hugs</strong>
+  <span style="opacity: 0.7;">(っ◕‿◕)っ</span>
 </div>
