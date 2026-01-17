@@ -525,6 +525,55 @@ impl HugsError {
         }
     }
 
+    /// Create a template render error for frontmatter with proper file location
+    ///
+    /// This shows the actual source file and highlights the correct line in frontmatter
+    /// where the template expression is, rather than showing "frontmatter:1:x".
+    pub fn frontmatter_template_error(
+        source_file: &str,
+        source_content: &str,
+        template_str: &str,
+        template_offset: usize,
+        error: &minijinja::Error,
+        hints: &TemplateHints,
+    ) -> Self {
+        let reason = format_template_error_reason(error);
+        let help_text = template_error_help(error, hints);
+
+        // Calculate the span within the full source content
+        let span = if let Some(range) = error.range() {
+            // Error range is relative to template_str, add the offset for full file position
+            let start = template_offset + range.start;
+            let len = range.end.saturating_sub(range.start).max(1);
+            // Clamp to source content bounds
+            let start = start.min(source_content.len());
+            let len = len.min(source_content.len().saturating_sub(start));
+            SourceSpan::new(start.into(), len.into())
+        } else if let Some(line_num) = error.line() {
+            // Line number relative to template_str - find the offset in full content
+            // For single-line template strings, line 1 means we point to the template itself
+            let line_offset: usize = template_str
+                .lines()
+                .take(line_num.saturating_sub(1))
+                .map(|l| l.len() + 1)
+                .sum();
+            let offset = template_offset + line_offset;
+            let line_len = template_str.lines().nth(line_num.saturating_sub(1)).map_or(1, |l| l.len().max(1));
+            SourceSpan::new(offset.into(), line_len.into())
+        } else {
+            // Fallback: point to start of template string
+            SourceSpan::new(template_offset.into(), template_str.len().max(1).into())
+        };
+
+        HugsError::TemplateRender {
+            file: StyledPath::from(source_file),
+            src: NamedSource::new(source_file.to_string(), source_content.to_string()),
+            span,
+            reason,
+            help_text,
+        }
+    }
+
     /// Create a port bind error with command source and highlighted port
     pub fn port_bind(path: &Path, port: u16, cause: std::io::Error) -> Self {
         use owo_colors::OwoColorize;

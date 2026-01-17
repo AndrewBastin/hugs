@@ -710,18 +710,24 @@ impl AppData {
         let macros = load_macros(&site_path).await?;
         let macros_template = build_macros_template(&macros);
 
-        // Scan pages and separate static from dynamic
-        let scan_result = scan_pages(&site_path).await?;
+        // Phase 1: Scan pages and collect static pages + raw dynamic definitions
+        let raw_scan_result = scan_pages_raw(&site_path).await?;
+
+        // Create initial pages Arc with just static pages (for dynamic param evaluation)
+        let static_pages = Arc::new(raw_scan_result.static_pages.clone());
+
+        // Phase 2: Evaluate dynamic page parameters (now pages() is available)
+        let dynamic_defs = evaluate_dynamic_defs(raw_scan_result.raw_dynamic_defs, &static_pages)?;
 
         // Expand dynamic pages into concrete pages
-        let expanded_pages = expand_dynamic_pages(&scan_result.dynamic_defs);
+        let expanded_pages = expand_dynamic_pages(&dynamic_defs);
 
         // Combine static and expanded pages
-        let mut all_pages = scan_result.static_pages;
+        let mut all_pages = raw_scan_result.static_pages;
         all_pages.extend(expanded_pages);
 
         let pages = Arc::new(all_pages);
-        let dynamic_defs = Arc::new(scan_result.dynamic_defs);
+        let dynamic_defs = Arc::new(dynamic_defs);
 
         let initial_page_content = PageContent {
             title: "",
@@ -900,6 +906,15 @@ pub struct DynamicPageDef {
     pub frontmatter: YamlValue,
 }
 
+/// Raw dynamic page definition before parameter evaluation
+/// Used in two-phase scanning where we first collect all pages, then evaluate dynamic params
+#[derive(Clone)]
+struct RawDynamicPageDef {
+    param_name: String,
+    source_path: PathBuf,
+    frontmatter: YamlValue,
+}
+
 /// A parsed macro definition from _/macros/*.md
 #[derive(Clone, Debug)]
 pub struct MacroDefinition {
@@ -921,10 +936,11 @@ pub struct MacroParam {
     pub default_value: String,
 }
 
-/// Result of scanning pages - separates static pages from dynamic definitions
-pub struct ScanResult {
-    pub static_pages: Vec<PageInfo>,
-    pub dynamic_defs: Vec<DynamicPageDef>,
+/// Result of scanning pages - separates static pages from raw dynamic definitions
+/// Dynamic parameter values are not yet evaluated (requires pages to be available)
+struct RawScanResult {
+    static_pages: Vec<PageInfo>,
+    raw_dynamic_defs: Vec<RawDynamicPageDef>,
 }
 
 /// Context for rendering a dynamic page - contains the parameter name and value
@@ -1015,11 +1031,13 @@ fn extract_param_name(filename: &str) -> Option<String> {
         .map(String::from)
 }
 
-/// Evaluate parameter values from frontmatter - either a direct array or a Tera expression
-fn evaluate_param_values(
+/// Evaluate parameter values from frontmatter with access to pages() and other helpers.
+/// This is the enhanced version that provides helper functions in the evaluation context.
+fn evaluate_param_values_with_pages(
     param_name: &str,
     frontmatter: &YamlValue,
     source_path: &Path,
+    pages: &Arc<Vec<PageInfo>>,
 ) -> Result<Vec<YamlValue>> {
     let mapping = frontmatter.as_mapping().ok_or_else(|| HugsError::DynamicMissingParam {
         file: source_path.display().to_string().into(),
@@ -1039,8 +1057,11 @@ fn evaluate_param_values(
 
         // Jinja expression: page_no: "{{ range(end=5) }}" or page_no: "range(end=5)"
         YamlValue::String(expr) => {
-            // Create a minimal MiniJinja environment to evaluate the expression
+            // Create MiniJinja environment with helper functions
             let mut env = Environment::new();
+
+            // Add the pages() function
+            env.add_function("pages", create_pages_function(Arc::clone(pages)));
 
             // Strip {{ }} wrapper if present (user can write either form)
             let clean_expr = expr
@@ -1051,14 +1072,22 @@ fn evaluate_param_values(
                 .unwrap_or(expr.trim());
 
             // Wrap expression to output JSON array
-            let template = format!("{{% set result = {} %}}[{{% for item in result %}}{{{{ item }}}}{{% if not loop.last %}},{{% endif %}}{{% endfor %}}]", clean_expr);
+            // Use debug format for strings to get quoted output
+            let template = format!(
+                r#"{{% set result = {} %}}{{% for item in result %}}{{{{ item }}}}{{% if not loop.last %}}
+{{% endif %}}{{% endfor %}}"#,
+                clean_expr
+            );
+
+            // Collect available function names for error messages
+            let available_functions: Vec<String> = env.globals().map(|(name, _)| name.to_string()).collect();
 
             env.add_template("expr", &template).map_err(|e| {
                 HugsError::DynamicExprEval {
                     file: source_path.display().to_string().into(),
                     param_name: param_name.into(),
                     expression: expr.clone(),
-                    reason: e.to_string(),
+                    reason: format_dynamic_expr_error(&e, &available_functions),
                 }
             })?;
 
@@ -1067,7 +1096,7 @@ fn evaluate_param_values(
                     file: source_path.display().to_string().into(),
                     param_name: param_name.into(),
                     expression: expr.clone(),
-                    reason: e.to_string(),
+                    reason: format_dynamic_expr_error(&e, &available_functions),
                 }
             })?;
 
@@ -1076,45 +1105,180 @@ fn evaluate_param_values(
                     file: source_path.display().to_string().into(),
                     param_name: param_name.into(),
                     expression: expr.clone(),
-                    reason: e.to_string(),
+                    reason: format_dynamic_expr_error(&e, &available_functions),
                 }
             })?;
 
-            // Parse the JSON array output
-            let values: Vec<serde_json::Value> =
-                serde_json::from_str(&output).map_err(|e| HugsError::DynamicExprEval {
-                    file: source_path.display().to_string().into(),
-                    param_name: param_name.into(),
-                    expression: expr.clone(),
-                    reason: format!("Expression didn't produce a valid array: {}", e),
-                })?;
-
-            // Convert JSON values to YAML values
-            Ok(values
-                .into_iter()
-                .map(|v| match v {
-                    serde_json::Value::Number(n) => {
-                        if let Some(i) = n.as_i64() {
-                            YamlValue::Number(i.into())
-                        } else if let Some(f) = n.as_f64() {
-                            YamlValue::Number(serde_yaml::Number::from(f))
-                        } else {
-                            YamlValue::String(n.to_string())
-                        }
+            // Parse the newline-separated output
+            let values: Vec<YamlValue> = output
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| {
+                    let trimmed = line.trim();
+                    // Try to parse as number
+                    if let Ok(i) = trimmed.parse::<i64>() {
+                        YamlValue::Number(i.into())
+                    } else if let Ok(f) = trimmed.parse::<f64>() {
+                        YamlValue::Number(serde_yaml::Number::from(f))
+                    } else if trimmed == "true" {
+                        YamlValue::Bool(true)
+                    } else if trimmed == "false" {
+                        YamlValue::Bool(false)
+                    } else {
+                        YamlValue::String(trimmed.to_string())
                     }
-                    serde_json::Value::String(s) => YamlValue::String(s),
-                    serde_json::Value::Bool(b) => YamlValue::Bool(b),
-                    _ => YamlValue::String(v.to_string()),
                 })
-                .collect())
+                .collect();
+
+            Ok(values)
         }
 
         _ => Err(HugsError::DynamicParamParse {
             file: source_path.display().to_string().into(),
             param_name: param_name.into(),
-            reason: "Parameter value must be an array or a Tera expression string".into(),
+            reason: "Parameter value must be an array or a Jinja expression string".into(),
         }),
     }
+}
+
+/// Format error message for dynamic expression evaluation, including available functions
+fn format_dynamic_expr_error(error: &minijinja::Error, available_functions: &[String]) -> String {
+    let base_msg = error
+        .detail()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| error.to_string());
+
+    // Check if this is an unknown function error
+    if matches!(error.kind(), minijinja::ErrorKind::UnknownFunction) {
+        format!(
+            "{}. Available functions: {}",
+            base_msg,
+            available_functions.join(", ")
+        )
+    } else {
+        base_msg
+    }
+}
+
+/// Render template expressions in frontmatter values for dynamic pages.
+///
+/// This allows frontmatter like `title: "{{ tag | title }}"` to be evaluated
+/// with the dynamic parameter context (e.g., tag = "basics" -> title = "Basics").
+fn render_frontmatter_values(
+    frontmatter: &YamlValue,
+    dynamic_ctx: &DynamicContext,
+    pages: &Arc<Vec<PageInfo>>,
+    language: &str,
+    source_file: &str,
+    source_content: &str,
+) -> Result<YamlValue> {
+    let mapping = match frontmatter.as_mapping() {
+        Some(m) => m,
+        None => return Ok(frontmatter.clone()),
+    };
+
+    let mut env = Environment::new();
+
+    // Add the pages() function
+    env.add_function("pages", create_pages_function(Arc::clone(pages)));
+
+    // Add the datefmt filter
+    env.add_filter("datefmt", create_datefmt_filter(language.to_string()));
+
+    // Add the help filter (same as in page templates)
+    env.add_filter("help", create_help_filter());
+
+    let mut rendered_mapping = serde_yaml::Mapping::new();
+
+    for (key, value) in mapping {
+        let rendered_value = render_yaml_value(value, &env, dynamic_ctx, source_file, source_content)?;
+        rendered_mapping.insert(key.clone(), rendered_value);
+    }
+
+    Ok(YamlValue::Mapping(rendered_mapping))
+}
+
+/// Recursively render template expressions in a YAML value.
+fn render_yaml_value(
+    value: &YamlValue,
+    env: &Environment,
+    dynamic_ctx: &DynamicContext,
+    source_file: &str,
+    source_content: &str,
+) -> Result<YamlValue> {
+    match value {
+        YamlValue::String(s) => {
+            // Only render if it looks like it might contain template syntax
+            if s.contains("{{") || s.contains("{%") {
+                let rendered = render_single_template_string(s, env, dynamic_ctx, source_file, source_content)?;
+                Ok(YamlValue::String(rendered))
+            } else {
+                Ok(value.clone())
+            }
+        }
+        YamlValue::Sequence(seq) => {
+            let rendered: Result<Vec<YamlValue>> = seq
+                .iter()
+                .map(|v| render_yaml_value(v, env, dynamic_ctx, source_file, source_content))
+                .collect();
+            Ok(YamlValue::Sequence(rendered?))
+        }
+        YamlValue::Mapping(map) => {
+            let mut rendered_map = serde_yaml::Mapping::new();
+            for (k, v) in map {
+                rendered_map.insert(k.clone(), render_yaml_value(v, env, dynamic_ctx, source_file, source_content)?);
+            }
+            Ok(YamlValue::Mapping(rendered_map))
+        }
+        // Numbers, booleans, null - preserve as-is
+        _ => Ok(value.clone()),
+    }
+}
+
+/// Render a single template string with the dynamic context.
+fn render_single_template_string(
+    template_str: &str,
+    env: &Environment,
+    dynamic_ctx: &DynamicContext,
+    source_file: &str,
+    source_content: &str,
+) -> Result<String> {
+    let mut local_env = env.clone();
+
+    // Generate hints from the environment for helpful error messages
+    let hints = TemplateHints::from_environment(&local_env);
+
+    // Find where the template string appears in the source content for error reporting
+    let template_offset = source_content.find(template_str).unwrap_or(0);
+
+    // Helper to create error with proper file location
+    let make_error = |e: &minijinja::Error| {
+        HugsError::frontmatter_template_error(
+            source_file,
+            source_content,
+            template_str,
+            template_offset,
+            e,
+            &hints,
+        )
+    };
+
+    // Create a unique template name
+    local_env
+        .add_template("__frontmatter_value__", template_str)
+        .map_err(|e| make_error(&e))?;
+
+    let tmpl = local_env.get_template("__frontmatter_value__").map_err(|e| make_error(&e))?;
+
+    // Create context with the dynamic parameter
+    let (param_name, param_value) = dynamic_ctx.to_json_pair();
+    let ctx = minijinja::context! {
+        ..minijinja::Value::from_serialize(&serde_json::json!({
+            param_name: param_value
+        }))
+    };
+
+    tmpl.render(ctx).map_err(|e| make_error(&e))
 }
 
 /// Convert a YAML value to a string for URL generation
@@ -1334,10 +1498,12 @@ pub fn convert_file_path_to_url(path: &Path) -> String {
 /// Intermediate result for parsing a single page file
 enum ParsedPage {
     Static(PageInfo),
-    Dynamic(DynamicPageDef),
+    RawDynamic(RawDynamicPageDef),
 }
 
-async fn scan_pages(site_path: &PathBuf) -> Result<ScanResult> {
+/// Phase 1: Scan all pages, collecting static pages and raw dynamic definitions
+/// Dynamic parameter expressions are NOT evaluated here (they need pages to be available)
+async fn scan_pages_raw(site_path: &PathBuf) -> Result<RawScanResult> {
     // 1. Collect paths synchronously (fast - just directory walking)
     let paths: Vec<(PathBuf, PathBuf)> = WalkDir::new(site_path)
         .into_iter()
@@ -1394,16 +1560,10 @@ async fn scan_pages(site_path: &PathBuf) -> Result<ScanResult> {
                 let filename = relative_path.file_name()?.to_str()?;
                 let param_name = extract_param_name(filename)?;
 
-                // Evaluate parameter values (can fail)
-                let param_values = match evaluate_param_values(&param_name, &frontmatter, &relative_path) {
-                    Ok(values) => values,
-                    Err(e) => return Some(Err(e)),
-                };
-
-                Some(Ok(ParsedPage::Dynamic(DynamicPageDef {
+                // Don't evaluate parameter values yet - we need pages to be available first
+                Some(Ok(ParsedPage::RawDynamic(RawDynamicPageDef {
                     param_name,
                     source_path: relative_path,
-                    param_values,
                     frontmatter,
                 })))
             } else {
@@ -1421,21 +1581,47 @@ async fn scan_pages(site_path: &PathBuf) -> Result<ScanResult> {
 
     // 3. Collect results
     let mut static_pages = Vec::new();
-    let mut dynamic_defs = Vec::new();
+    let mut raw_dynamic_defs = Vec::new();
 
     while let Some(result) = join_set.join_next().await {
         if let Ok(Some(parsed_result)) = result {
             match parsed_result? {
                 ParsedPage::Static(page_info) => static_pages.push(page_info),
-                ParsedPage::Dynamic(def) => dynamic_defs.push(def),
+                ParsedPage::RawDynamic(def) => raw_dynamic_defs.push(def),
             }
         }
     }
 
-    Ok(ScanResult {
+    Ok(RawScanResult {
         static_pages,
-        dynamic_defs,
+        raw_dynamic_defs,
     })
+}
+
+/// Phase 2: Evaluate dynamic page parameters now that we have access to pages
+fn evaluate_dynamic_defs(
+    raw_defs: Vec<RawDynamicPageDef>,
+    pages: &Arc<Vec<PageInfo>>,
+) -> Result<Vec<DynamicPageDef>> {
+    let mut evaluated_defs = Vec::new();
+
+    for raw_def in raw_defs {
+        let param_values = evaluate_param_values_with_pages(
+            &raw_def.param_name,
+            &raw_def.frontmatter,
+            &raw_def.source_path,
+            pages,
+        )?;
+
+        evaluated_defs.push(DynamicPageDef {
+            param_name: raw_def.param_name,
+            source_path: raw_def.source_path,
+            param_values,
+            frontmatter: raw_def.frontmatter,
+        });
+    }
+
+    Ok(evaluated_defs)
 }
 
 #[derive(Serialize)]
@@ -1597,9 +1783,33 @@ pub async fn resolve_dynamic_doc(
         .replace(&format!("[{}]", dynamic_ctx.param_name), &value_str)
         .replace('/', " ");
 
-    // Parse frontmatter FIRST from raw content so it's available to the page body
-    let (frontmatter, raw_body) =
-        markdown_frontmatter::parse::<ContentFrontmatter>(&doc_content_jinja).map_err(|e| {
+    // Parse frontmatter as raw YAML first
+    let (raw_frontmatter, raw_body) =
+        markdown_frontmatter::parse::<YamlValue>(&doc_content_jinja).map_err(|e| {
+            HugsError::FrontmatterParse {
+                file: relative_path_str.clone().into(),
+                src: miette::NamedSource::new(relative_path_str.clone(), doc_content_jinja.clone()),
+                span: miette::SourceSpan::from((0_usize, 1_usize)),
+                reason: format!("Failed to parse frontmatter as YAML: {}", e),
+            }
+        })?;
+
+    // Render template expressions in frontmatter values (e.g., `title: "{{ tag | title }}"`)
+    let rendered_frontmatter = render_frontmatter_values(
+        &raw_frontmatter,
+        dynamic_ctx,
+        &app_data.pages,
+        &app_data.config.site.language,
+        &relative_path_str,
+        &doc_content_jinja,
+    )?;
+
+    // Convert rendered frontmatter to JSON for template context
+    let frontmatter_json = yaml_to_json_value(&rendered_frontmatter);
+
+    // Deserialize rendered frontmatter into ContentFrontmatter
+    let frontmatter: ContentFrontmatter = serde_yaml::from_value(rendered_frontmatter.clone())
+        .map_err(|e| {
             HugsError::FrontmatterParse {
                 file: relative_path_str.clone().into(),
                 src: miette::NamedSource::new(relative_path_str.clone(), doc_content_jinja.clone()),
@@ -1610,17 +1820,6 @@ pub async fn resolve_dynamic_doc(
                 ),
             }
         })?;
-
-    let (raw_frontmatter, _) =
-        markdown_frontmatter::parse::<YamlValue>(&doc_content_jinja).map_err(|e| {
-            HugsError::FrontmatterParse {
-                file: relative_path_str.clone().into(),
-                src: miette::NamedSource::new(relative_path_str.clone(), doc_content_jinja.clone()),
-                span: miette::SourceSpan::from((0_usize, 1_usize)),
-                reason: format!("Failed to parse frontmatter as YAML: {}", e),
-            }
-        })?;
-    let frontmatter_json = yaml_to_json_value(&raw_frontmatter);
 
     // Create merged context: PageContent fields + frontmatter fields + dynamic parameter
     let initial_page_content = PageContent {
@@ -2044,5 +2243,391 @@ mod tests {
         let tmpl = env.get_template("test").unwrap();
         let result = tmpl.render(minijinja::context! { date => "2024-01-15" }).unwrap();
         assert_eq!(result, "janvier");
+    }
+
+    #[test]
+    fn test_dynamic_param_pages_function_available() {
+        // Test that pages() function is available in dynamic parameter expressions
+        // This allows frontmatter like: slug: "{{ pages(within='/blog/') | map(attribute='url') }}"
+        let pages = Arc::new(vec![
+            PageInfo {
+                url: "/blog/post1".to_string(),
+                file_path: "blog/post1.md".to_string(),
+                frontmatter: YamlValue::Mapping(serde_yaml::Mapping::new()),
+            },
+            PageInfo {
+                url: "/blog/post2".to_string(),
+                file_path: "blog/post2.md".to_string(),
+                frontmatter: YamlValue::Mapping(serde_yaml::Mapping::new()),
+            },
+        ]);
+
+        // Expression using pages() to get URLs from blog posts
+        let expr = "{{ pages(within='/blog/') | map(attribute='url') }}";
+        let mut frontmatter = serde_yaml::Mapping::new();
+        frontmatter.insert(
+            YamlValue::String("slug".to_string()),
+            YamlValue::String(expr.to_string()),
+        );
+        let yaml_fm = YamlValue::Mapping(frontmatter);
+
+        let result = evaluate_param_values_with_pages(
+            "slug",
+            &yaml_fm,
+            Path::new("test/[slug].md"),
+            &pages,
+        );
+
+        assert!(result.is_ok(), "pages() should be available in frontmatter expressions: {:?}", result.err());
+        let values = result.unwrap();
+        // Should produce two URLs from the blog posts
+        assert_eq!(values.len(), 2);
+        assert!(values.contains(&YamlValue::String("/blog/post1".to_string())));
+        assert!(values.contains(&YamlValue::String("/blog/post2".to_string())));
+    }
+
+    #[test]
+    fn test_dynamic_param_error_includes_environment_info() {
+        // Test that errors from frontmatter evaluation include helpful environment info
+        let pages = Arc::new(vec![
+            PageInfo {
+                url: "/blog/post1".to_string(),
+                file_path: "blog/post1.md".to_string(),
+                frontmatter: YamlValue::Mapping(serde_yaml::Mapping::new()),
+            },
+        ]);
+
+        // Expression with a typo (pges instead of pages)
+        let expr = "{{ pges(within='/blog/') }}";
+        let mut frontmatter = serde_yaml::Mapping::new();
+        frontmatter.insert(
+            YamlValue::String("slug".to_string()),
+            YamlValue::String(expr.to_string()),
+        );
+        let yaml_fm = YamlValue::Mapping(frontmatter);
+
+        let result = evaluate_param_values_with_pages(
+            "slug",
+            &yaml_fm,
+            Path::new("test/[slug].md"),
+            &pages,
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_str = format!("{:?}", err);
+
+        // Error should mention the available functions
+        assert!(
+            err_str.contains("pages") || err_str.contains("Available functions"),
+            "Error should mention available functions like 'pages'. Got: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn test_render_frontmatter_values_with_dynamic_context() {
+        // Test that dynamic frontmatter values like `title: "{{ tag | title }}"`
+        // are rendered with the dynamic parameter context
+        let pages = Arc::new(vec![]);
+
+        // Create frontmatter with template expressions
+        let mut frontmatter = serde_yaml::Mapping::new();
+        frontmatter.insert(
+            YamlValue::String("title".to_string()),
+            YamlValue::String("{{ tag | title }}".to_string()),
+        );
+        frontmatter.insert(
+            YamlValue::String("description".to_string()),
+            YamlValue::String("Posts tagged with {{ tag }}".to_string()),
+        );
+        frontmatter.insert(
+            YamlValue::String("static_field".to_string()),
+            YamlValue::String("No template here".to_string()),
+        );
+        let yaml_fm = YamlValue::Mapping(frontmatter);
+
+        // Create dynamic context with tag = "basics"
+        let dynamic_ctx = DynamicContext {
+            param_name: "tag".to_string(),
+            param_value: YamlValue::String("basics".to_string()),
+        };
+
+        let result = render_frontmatter_values(
+            &yaml_fm,
+            &dynamic_ctx,
+            &pages,
+            "en_US",
+            "test.md",
+            "---\ntitle: \"{{ tag | title }}\"\n---\n",
+        );
+
+        assert!(result.is_ok(), "render_frontmatter_values should succeed: {:?}", result.err());
+        let rendered = result.unwrap();
+
+        // Check that the title was rendered with the `title` filter
+        if let YamlValue::Mapping(map) = &rendered {
+            let title = map.get(&YamlValue::String("title".to_string()));
+            assert_eq!(
+                title,
+                Some(&YamlValue::String("Basics".to_string())),
+                "title should be rendered as 'Basics'"
+            );
+
+            let description = map.get(&YamlValue::String("description".to_string()));
+            assert_eq!(
+                description,
+                Some(&YamlValue::String("Posts tagged with basics".to_string())),
+                "description should be rendered with tag value"
+            );
+
+            let static_field = map.get(&YamlValue::String("static_field".to_string()));
+            assert_eq!(
+                static_field,
+                Some(&YamlValue::String("No template here".to_string())),
+                "static fields should remain unchanged"
+            );
+        } else {
+            panic!("Expected Mapping, got {:?}", rendered);
+        }
+    }
+
+    #[test]
+    fn test_render_frontmatter_values_preserves_non_string_values() {
+        // Test that non-string values (numbers, arrays, etc.) are preserved
+        let pages = Arc::new(vec![]);
+
+        let mut frontmatter = serde_yaml::Mapping::new();
+        frontmatter.insert(
+            YamlValue::String("title".to_string()),
+            YamlValue::String("{{ tag | title }}".to_string()),
+        );
+        frontmatter.insert(
+            YamlValue::String("order".to_string()),
+            YamlValue::Number(42.into()),
+        );
+        frontmatter.insert(
+            YamlValue::String("tags".to_string()),
+            YamlValue::Sequence(vec![
+                YamlValue::String("rust".to_string()),
+                YamlValue::String("web".to_string()),
+            ]),
+        );
+        let yaml_fm = YamlValue::Mapping(frontmatter);
+
+        let dynamic_ctx = DynamicContext {
+            param_name: "tag".to_string(),
+            param_value: YamlValue::String("basics".to_string()),
+        };
+
+        let result = render_frontmatter_values(
+            &yaml_fm,
+            &dynamic_ctx,
+            &pages,
+            "en_US",
+            "test.md",
+            "---\ntitle: \"{{ tag | title }}\"\norder: 42\n---\n",
+        );
+
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+
+        if let YamlValue::Mapping(map) = &rendered {
+            // Number should be preserved
+            let order = map.get(&YamlValue::String("order".to_string()));
+            assert_eq!(order, Some(&YamlValue::Number(42.into())));
+
+            // Array should be preserved
+            let tags = map.get(&YamlValue::String("tags".to_string()));
+            assert_eq!(
+                tags,
+                Some(&YamlValue::Sequence(vec![
+                    YamlValue::String("rust".to_string()),
+                    YamlValue::String("web".to_string()),
+                ]))
+            );
+        } else {
+            panic!("Expected Mapping, got {:?}", rendered);
+        }
+    }
+
+    #[test]
+    fn test_render_frontmatter_unknown_filter_returns_proper_error() {
+        // Test that unknown filters in frontmatter return a TemplateRender error
+        // with helpful suggestions, not a generic TemplateContext error
+        let pages = Arc::new(vec![]);
+
+        let mut frontmatter = serde_yaml::Mapping::new();
+        frontmatter.insert(
+            YamlValue::String("title".to_string()),
+            YamlValue::String("{{ tag | unknownfilter }}".to_string()),
+        );
+        let yaml_fm = YamlValue::Mapping(frontmatter);
+
+        let dynamic_ctx = DynamicContext {
+            param_name: "tag".to_string(),
+            param_value: YamlValue::String("basics".to_string()),
+        };
+
+        let result = render_frontmatter_values(
+            &yaml_fm,
+            &dynamic_ctx,
+            &pages,
+            "en_US",
+            "test.md",
+            "---\ntitle: \"{{ tag | unknownfilter }}\"\n---\n",
+        );
+
+        assert!(result.is_err(), "Should fail with unknown filter");
+        let err = result.unwrap_err();
+
+        // Check that the error is a TemplateRender error, not TemplateContext
+        match &err {
+            HugsError::TemplateRender { help_text, .. } => {
+                // Should mention it's an unknown filter and suggest alternatives
+                assert!(
+                    help_text.contains("filter") || help_text.contains("Filter"),
+                    "Error should mention filters. Got help_text: {}",
+                    help_text
+                );
+            }
+            HugsError::TemplateContext { reason } => {
+                panic!(
+                    "Got TemplateContext error instead of TemplateRender. \
+                     TemplateContext errors are generic and unhelpful. \
+                     Reason: {}",
+                    reason
+                );
+            }
+            other => {
+                panic!("Expected TemplateRender error, got: {:?}", other);
+            }
+        }
+    }
+
+    #[test]
+    fn test_render_frontmatter_help_filter_works() {
+        // Test that the help filter is available in frontmatter and produces
+        // the expected help output (not an "unknown filter" error)
+        let pages = Arc::new(vec![]);
+
+        let mut frontmatter = serde_yaml::Mapping::new();
+        frontmatter.insert(
+            YamlValue::String("title".to_string()),
+            YamlValue::String("{{ tag | help }}".to_string()),
+        );
+        let yaml_fm = YamlValue::Mapping(frontmatter);
+
+        let dynamic_ctx = DynamicContext {
+            param_name: "tag".to_string(),
+            param_value: YamlValue::String("basics".to_string()),
+        };
+
+        let result = render_frontmatter_values(
+            &yaml_fm,
+            &dynamic_ctx,
+            &pages,
+            "en_US",
+            "test.md",
+            "---\ntitle: \"{{ tag | help }}\"\n---\n",
+        );
+
+        // The help filter should error (as designed), but the error should
+        // show helpful filter information, not an "unknown filter" error
+        assert!(result.is_err(), "Help filter should produce an error");
+        let err = result.unwrap_err();
+
+        // Check that we got a TemplateRender error with the help output
+        match &err {
+            HugsError::TemplateRender { reason, help_text, .. } => {
+                // The reason should indicate this is a help request
+                assert!(
+                    reason.contains("you asked for filter help"),
+                    "Error reason should indicate help was requested. Got: {}",
+                    reason
+                );
+                // The help text should show available filters
+                assert!(
+                    help_text.contains("Filters you can apply"),
+                    "Help text should list available filters. Got: {}",
+                    help_text
+                );
+                // The help text should show the value being filtered
+                assert!(
+                    help_text.contains("basics") || help_text.contains("String"),
+                    "Help text should show the value type. Got: {}",
+                    help_text
+                );
+            }
+            other => {
+                panic!("Expected TemplateRender error with help output, got: {:?}", other);
+            }
+        }
+    }
+
+    #[test]
+    fn test_render_frontmatter_error_shows_file_location() {
+        // Test that frontmatter template errors show the actual file path and line number
+        let pages = Arc::new(vec![]);
+
+        let mut frontmatter = serde_yaml::Mapping::new();
+        frontmatter.insert(
+            YamlValue::String("title".to_string()),
+            YamlValue::String("{{ tag | help }}".to_string()),
+        );
+        let yaml_fm = YamlValue::Mapping(frontmatter);
+
+        let dynamic_ctx = DynamicContext {
+            param_name: "tag".to_string(),
+            param_value: YamlValue::String("basics".to_string()),
+        };
+
+        let source_file = "blog/[tag].md";
+        let source_content = "---\ntitle: \"{{ tag | help }}\"\ndescription: \"Test\"\n---\n\nContent here";
+
+        let result = render_frontmatter_values(
+            &yaml_fm,
+            &dynamic_ctx,
+            &pages,
+            "en_US",
+            source_file,
+            source_content,
+        );
+
+        assert!(result.is_err(), "Help filter should produce an error");
+        let err = result.unwrap_err();
+
+        // Check that the error shows the actual file path, not "frontmatter"
+        match &err {
+            HugsError::TemplateRender { file, src, span, .. } => {
+                // The file path should be the actual source file
+                let file_str = format!("{:?}", file);
+                assert!(
+                    file_str.contains("blog/[tag].md"),
+                    "Error should show actual file path 'blog/[tag].md', got: {}",
+                    file_str
+                );
+
+                // The source name should be the file path (not "frontmatter")
+                let src_str = format!("{:?}", src);
+                assert!(
+                    src_str.contains("blog/[tag].md"),
+                    "Error source name should be the file path, got: {}",
+                    src_str
+                );
+
+                // The span should point to somewhere in the file (not just offset 0)
+                // The template "{{ tag | help }}" starts after "---\ntitle: \"" which is 14 bytes
+                let offset: usize = (*span).offset().into();
+                assert!(
+                    offset >= 14,
+                    "Error span should point into the file content (after frontmatter header), got offset: {}",
+                    offset
+                );
+            }
+            other => {
+                panic!("Expected TemplateRender error, got: {:?}", other);
+            }
+        }
     }
 }
