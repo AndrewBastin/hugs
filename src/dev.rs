@@ -102,7 +102,10 @@ const LIVE_RELOAD_SCRIPT: &str = r#"<script>
 </script>"#;
 
 pub struct DevAppState {
-    pub app_data: RwLock<AppData>,
+    pub app_data: RwLock<Option<AppData>>,
+    /// Stores an error when site data couldn't be loaded (startup or reload error)
+    /// When this is Some, all page requests will show this error
+    pub startup_error: RwLock<Option<HugsError>>,
     pub reload_tx: broadcast::Sender<()>,
     pub minify_config: MinifyConfig,
 }
@@ -157,7 +160,18 @@ async fn live_reload_ws(
 
 #[get("/theme.css")]
 async fn theme(state: web::Data<Arc<DevAppState>>) -> HttpResponse {
-    let app_data = state.app_data.read().await;
+    // Check for startup error
+    if let Some(error) = state.startup_error.read().await.as_ref() {
+        return HttpResponse::InternalServerError()
+            .content_type(ContentType::html())
+            .body(render_error_html(error, LIVE_RELOAD_SCRIPT));
+    }
+
+    let app_data_guard = state.app_data.read().await;
+    let app_data = match app_data_guard.as_ref() {
+        Some(data) => data,
+        None => return HttpResponse::InternalServerError().body("I couldn't load the site data"),
+    };
     let css = minify_css_content(&app_data.theme_css, &state.minify_config);
     HttpResponse::Ok()
         .content_type(ContentType(mime_guess::mime::TEXT_CSS_UTF_8))
@@ -168,7 +182,18 @@ async fn theme(state: web::Data<Arc<DevAppState>>) -> HttpResponse {
 /// In dev mode, we serve the theme CSS regardless of the hash value
 #[get("/theme.{hash}.css")]
 async fn theme_hashed(state: web::Data<Arc<DevAppState>>) -> HttpResponse {
-    let app_data = state.app_data.read().await;
+    // Check for startup error
+    if let Some(error) = state.startup_error.read().await.as_ref() {
+        return HttpResponse::InternalServerError()
+            .content_type(ContentType::html())
+            .body(render_error_html(error, LIVE_RELOAD_SCRIPT));
+    }
+
+    let app_data_guard = state.app_data.read().await;
+    let app_data = match app_data_guard.as_ref() {
+        Some(data) => data,
+        None => return HttpResponse::InternalServerError().body("I couldn't load the site data"),
+    };
     let css = minify_css_content(&app_data.theme_css, &state.minify_config);
     HttpResponse::Ok()
         .content_type(ContentType(mime_guess::mime::TEXT_CSS_UTF_8))
@@ -177,7 +202,18 @@ async fn theme_hashed(state: web::Data<Arc<DevAppState>>) -> HttpResponse {
 
 #[get("/sitemap.xml")]
 async fn sitemap(state: web::Data<Arc<DevAppState>>) -> HttpResponse {
-    let app_data = state.app_data.read().await;
+    // Check for startup error
+    if let Some(error) = state.startup_error.read().await.as_ref() {
+        return HttpResponse::InternalServerError()
+            .content_type(ContentType::html())
+            .body(render_error_html(error, LIVE_RELOAD_SCRIPT));
+    }
+
+    let app_data_guard = state.app_data.read().await;
+    let app_data = match app_data_guard.as_ref() {
+        Some(data) => data,
+        None => return HttpResponse::InternalServerError().body("I couldn't load the site data"),
+    };
     match generate_sitemap(&app_data.pages, &app_data.config.site) {
         Ok(xml) => HttpResponse::Ok()
             .content_type(ContentType::xml())
@@ -262,7 +298,23 @@ fn match_dynamic_page(url_path: &str, app_data: &AppData) -> Option<(String, Dyn
 
 #[get("/{tail:.*}")]
 async fn page(path: web::Path<String>, state: web::Data<Arc<DevAppState>>) -> HttpResponse {
-    let app_data = state.app_data.read().await;
+    // Check for startup error first - if there's an error, show it for all requests
+    if let Some(error) = state.startup_error.read().await.as_ref() {
+        return HttpResponse::InternalServerError()
+            .content_type(ContentType::html())
+            .body(render_error_html(error, LIVE_RELOAD_SCRIPT));
+    }
+
+    let app_data_guard = state.app_data.read().await;
+    let app_data = match app_data_guard.as_ref() {
+        Some(data) => data,
+        None => {
+            // No app data and no error - this shouldn't happen, but handle gracefully
+            return HttpResponse::InternalServerError()
+                .content_type(ContentType::html())
+                .body("I couldn't load the site data");
+        }
+    };
 
     // Normalize path by trimming trailing slashes
     let path_str = path.trim_end_matches('/');
@@ -403,15 +455,31 @@ fn start_file_watcher(
 
             match AppData::load(site_path_clone.clone(), "dev").await {
                 Ok(new_data) => {
-                    let mut app_data = state.app_data.write().await;
-                    *app_data = new_data;
+                    // Clear any previous error
+                    {
+                        let mut error = state.startup_error.write().await;
+                        *error = None;
+                    }
+                    // Update app data
+                    {
+                        let mut app_data = state.app_data.write().await;
+                        *app_data = Some(new_data);
+                    }
                     let _ = state.reload_tx.send(());
                     console::status("Reloaded", "site data");
                 }
                 Err(e) => {
                     console::warn("couldn't reload site data");
-                    let report = miette::Report::new(e);
+                    let report = miette::Report::new(e.clone());
                     eprintln!("{:?}", report);
+
+                    // Store the error so it's shown in the browser
+                    {
+                        let mut error = state.startup_error.write().await;
+                        *error = Some(e);
+                    }
+                    // Still trigger reload so the browser refreshes and shows the error
+                    let _ = state.reload_tx.send(());
                 }
             }
         }
@@ -424,13 +492,30 @@ pub async fn run_dev_server(path: PathBuf, port: u16, port_explicit: bool) -> Re
     console::status("Starting", "development server with live reload");
     console::status("Watching", path.display());
 
-    let app_data = AppData::load(path.clone(), "dev").await?;
-
     let (reload_tx, _) = broadcast::channel(16);
-    let minify_config = MinifyConfig::new(app_data.config.build.minify);
+
+    // Try to load the site data, but don't fail if there's an error
+    // Instead, store the error and show it in the browser
+    let (app_data, startup_error, minify_config) = match AppData::load(path.clone(), "dev").await {
+        Ok(data) => {
+            let minify = MinifyConfig::new(data.config.build.minify);
+            (Some(data), None, minify)
+        }
+        Err(e) => {
+            // Print the error to terminal as well
+            console::warn("couldn't load site data");
+            let report = miette::Report::new(e.clone());
+            eprintln!("{:?}", report);
+            console::status_cyan("Waiting", "for file changes to retry...");
+
+            // Use default minify config when we can't load the site
+            (None, Some(e), MinifyConfig::new(false))
+        }
+    };
 
     let state = Arc::new(DevAppState {
         app_data: RwLock::new(app_data),
+        startup_error: RwLock::new(startup_error),
         reload_tx,
         minify_config,
     });

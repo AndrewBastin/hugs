@@ -213,6 +213,65 @@ pub const HELP_MARKER_FUNCTION: &str = "__hugs_help_function__";
 pub const HELP_MARKER_FILTER: &str = "__hugs_help_filter__";
 pub const HELP_MARKER_TEST: &str = "__hugs_help_test__";
 
+/// MiniJinja builtin filters (from minijinja 2.x documentation)
+/// https://docs.rs/minijinja/latest/minijinja/filters/
+const BUILTIN_FILTERS: &[&str] = &[
+    // Type conversion
+    "bool", "float", "int", "list", "string",
+    // String operations
+    "capitalize", "escape", "e", "lower", "replace", "safe", "split", "title", "trim", "upper", "urlencode",
+    // Sequence operations
+    "batch", "chain", "first", "join", "last", "length", "lines", "reverse", "slice", "sort", "unique", "zip",
+    // Numeric operations
+    "abs", "max", "min", "round", "sum",
+    // Object/Dictionary operations
+    "attr", "dictsort", "items",
+    // Filtering/Selection
+    "default", "d", "map", "reject", "rejectattr", "select", "selectattr",
+    // Grouping
+    "groupby",
+    // Output formatting
+    "format", "indent", "pprint", "tojson",
+    // Hugs custom filters
+    "datefmt", "help",
+];
+
+/// MiniJinja builtin tests (from minijinja 2.x documentation)
+/// https://docs.rs/minijinja/latest/minijinja/tests/
+const BUILTIN_TESTS: &[&str] = &[
+    "boolean", "defined", "divisibleby", "endingwith", "eq", "equalto",
+    "even", "false", "filter", "float", "ge", "gt", "in", "integer",
+    "iterable", "le", "lower", "lt", "mapping", "ne", "none", "number",
+    "odd", "safe", "sameas", "sequence", "startingwith", "string",
+    "test", "true", "undefined", "upper", "help",
+];
+
+/// Wrap a list of items into lines with a max width
+fn wrap_items_to_lines(items: &[&str], max_width: usize) -> String {
+    let mut result = String::new();
+    let mut current_line = String::from("  ");
+
+    for (i, item) in items.iter().enumerate() {
+        let separator = if i == 0 { "" } else { ", " };
+        let with_sep = format!("{}{}", separator, item);
+
+        if current_line.len() + with_sep.len() > max_width && current_line.len() > 2 {
+            result.push_str(&current_line);
+            result.push('\n');
+            current_line = format!("  {}", item);
+        } else {
+            current_line.push_str(&with_sep);
+        }
+    }
+
+    if !current_line.trim().is_empty() {
+        result.push_str(&current_line);
+        result.push('\n');
+    }
+
+    result
+}
+
 /// Create the `help` function for minijinja
 /// Usage: {{ help() }} - shows all available variables, functions, filters, tests, macros
 fn create_help_function(
@@ -913,6 +972,8 @@ struct RawDynamicPageDef {
     param_name: String,
     source_path: PathBuf,
     frontmatter: YamlValue,
+    /// Full file content for error reporting with source spans
+    file_content: String,
 }
 
 /// A parsed macro definition from _/macros/*.md
@@ -1038,7 +1099,160 @@ fn evaluate_param_values_with_pages(
     frontmatter: &YamlValue,
     source_path: &Path,
     pages: &Arc<Vec<PageInfo>>,
+    file_content: &str,
 ) -> Result<Vec<YamlValue>> {
+    use miette::{NamedSource, SourceSpan};
+
+    // Helper to find the span of the param expression in the file content
+    let find_param_span = |expr: &str| -> SourceSpan {
+        // Look for the pattern "param_name: " or "param_name:" followed by the expression
+        let search_patterns = [
+            format!("{}: \"{}\"", param_name, expr),
+            format!("{}:\"{}\"", param_name, expr),
+            format!("{}: '{}'", param_name, expr),
+            format!("{}:'{}'", param_name, expr),
+        ];
+
+        for pattern in &search_patterns {
+            if let Some(pos) = file_content.find(pattern) {
+                // Point to the expression part (after "param_name: ")
+                let expr_start = pos + param_name.len() + 2; // +2 for ": " or ":"
+                return SourceSpan::new(expr_start.into(), (pattern.len() - param_name.len() - 2).into());
+            }
+        }
+
+        // Fallback: try to find just the expression string
+        if let Some(pos) = file_content.find(expr) {
+            return SourceSpan::new(pos.into(), expr.len().into());
+        }
+
+        // Last resort: point to start of file
+        SourceSpan::new(0_usize.into(), 1_usize.into())
+    };
+
+    // Helper to parse help filter/test marker and extract kind/value
+    let parse_help_marker = |detail: &str, marker: &str| -> Option<(String, String)> {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+
+        let rest = detail.strip_prefix(marker)?;
+        let mut kind = String::new();
+        let mut value_b64 = String::new();
+
+        for part in rest.split(':') {
+            if let Some(k) = part.strip_prefix("kind=") {
+                kind = k.to_string();
+            } else if let Some(v) = part.strip_prefix("value=") {
+                value_b64 = v.to_string();
+            }
+        }
+
+        let value = STANDARD
+            .decode(&value_b64)
+            .ok()
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_else(|| "?".to_string());
+
+        Some((kind, value))
+    };
+
+    // Helper to create the error with all fields
+    let make_error = |expr: &str, reason: String, resolved_value: Option<String>| -> HugsError {
+        let span = find_param_span(expr);
+
+        // Check if this is a help request - if so, provide specialized help
+        // Use the same span labels as template errors
+        let (display_reason, help_text, resolved) = if reason.starts_with(HELP_MARKER_FILTER) {
+            // Filter help: "you asked for filter help here"
+            if let Some((kind, value)) = parse_help_marker(&reason, HELP_MARKER_FILTER) {
+                use owo_colors::OwoColorize;
+                let friendly_reason = "you asked for filter help here".to_string();
+                let filters_list = wrap_items_to_lines(BUILTIN_FILTERS, 60);
+                let help = format!(
+                    "You're filtering a {} with value:\n    {}\n\n\
+                     Filters you can apply:\n{}\n\
+                     I'm trying to determine the routes for this dynamic page.\n\
+                     Make sure it produces an array of values.",
+                    kind.yellow().bold(),
+                    value.bright_yellow(),
+                    filters_list
+                );
+                (friendly_reason, help, Some(value))
+            } else {
+                // Fallback if parsing fails
+                let help = format!(
+                    "The expression `{}` failed to evaluate.{}\n\nI'm trying to determine the routes for this dynamic page.\nMake sure it produces an array of values.\n\nCommon functions:\n- range(end=5) -> [0, 1, 2, 3, 4]\n- range(start=1, end=6) -> [1, 2, 3, 4, 5]\n- pages(within='/blog') | map(attribute='slug') | list",
+                    expr,
+                    resolved_value.as_ref().map(|v| format!("\n\nThe expression resolved to:\n{}", v)).unwrap_or_default()
+                );
+                (reason, help, resolved_value)
+            }
+        } else if reason.starts_with(HELP_MARKER_TEST) {
+            // Test help: "you asked for test help here"
+            if let Some((kind, value)) = parse_help_marker(&reason, HELP_MARKER_TEST) {
+                use owo_colors::OwoColorize;
+                let friendly_reason = "you asked for test help here".to_string();
+                let tests_list = wrap_items_to_lines(BUILTIN_TESTS, 60);
+                let help = format!(
+                    "You're testing a {} with value:\n    {}\n\n\
+                     Tests you can use:\n{}\n\
+                     I'm trying to determine the routes for this dynamic page.\n\
+                     Make sure it produces an array of values.",
+                    kind.yellow().bold(),
+                    value.bright_yellow(),
+                    tests_list
+                );
+                (friendly_reason, help, Some(value))
+            } else {
+                let help = format!(
+                    "The expression `{}` failed to evaluate.{}\n\nI'm trying to determine the routes for this dynamic page.\nMake sure it produces an array of values.\n\nCommon functions:\n- range(end=5) -> [0, 1, 2, 3, 4]\n- range(start=1, end=6) -> [1, 2, 3, 4, 5]\n- pages(within='/blog') | map(attribute='slug') | list",
+                    expr,
+                    resolved_value.as_ref().map(|v| format!("\n\nThe expression resolved to:\n{}", v)).unwrap_or_default()
+                );
+                (reason, help, resolved_value)
+            }
+        } else if reason.starts_with(HELP_MARKER_FUNCTION) {
+            // Function help: "you asked for help here"
+            let friendly_reason = "you asked for help here".to_string();
+            let filters_list = wrap_items_to_lines(BUILTIN_FILTERS, 60);
+            let tests_list = wrap_items_to_lines(BUILTIN_TESTS, 60);
+            let help = format!(
+                "Variables you can use:\n\
+                 In dynamic page expressions, no variables are pre-defined.\n\
+                 Use pages() to get page data.\n\n\
+                 Functions you can call:\n\
+                 pages(), help()\n\n\
+                 Filters you can apply:\n{}\n\
+                 Tests you can use:\n{}\n\
+                 I'm trying to determine the routes for this dynamic page.\n\
+                 Make sure it produces an array of values.",
+                filters_list,
+                tests_list
+            );
+            (friendly_reason, help, None)
+        } else {
+            let help = format!(
+                "The expression `{}` failed to evaluate.{}\n\nI'm trying to determine the routes for this dynamic page.\nMake sure it produces an array of values.\n\nCommon functions:\n- range(end=5) -> [0, 1, 2, 3, 4]\n- range(start=1, end=6) -> [1, 2, 3, 4, 5]\n- pages(within='/blog') | map(attribute='slug') | list",
+                expr,
+                resolved_value.as_ref().map(|v| format!("\n\nThe expression resolved to:\n{}", v)).unwrap_or_default()
+            );
+            (reason, help, resolved_value)
+        };
+
+        HugsError::DynamicExprEval {
+            file: source_path.display().to_string().into(),
+            param_name: param_name.into(),
+            expression: expr.to_string(),
+            reason: display_reason,
+            src: Some(NamedSource::new(
+                source_path.display().to_string(),
+                file_content.to_string(),
+            )),
+            span,
+            resolved_value: resolved,
+            help_text,
+        }
+    };
+
     let mapping = frontmatter.as_mapping().ok_or_else(|| HugsError::DynamicMissingParam {
         file: source_path.display().to_string().into(),
         param_name: param_name.into(),
@@ -1063,6 +1277,18 @@ fn evaluate_param_values_with_pages(
             // Add the pages() function
             env.add_function("pages", create_pages_function(Arc::clone(pages)));
 
+            // Collect function names for help() function (before adding help)
+            let function_names: Vec<String> = env.globals().map(|(name, _)| name.to_string()).collect();
+
+            // Add the help filter for debugging dynamic page expressions
+            env.add_filter("help", create_help_filter());
+
+            // Add the help test for debugging
+            env.add_test("help", create_help_test());
+
+            // Add the help function for debugging
+            env.add_function("help", create_help_function(function_names));
+
             // Strip {{ }} wrapper if present (user can write either form)
             let clean_expr = expr
                 .trim()
@@ -1083,30 +1309,15 @@ fn evaluate_param_values_with_pages(
             let available_functions: Vec<String> = env.globals().map(|(name, _)| name.to_string()).collect();
 
             env.add_template("expr", &template).map_err(|e| {
-                HugsError::DynamicExprEval {
-                    file: source_path.display().to_string().into(),
-                    param_name: param_name.into(),
-                    expression: expr.clone(),
-                    reason: format_dynamic_expr_error(&e, &available_functions),
-                }
+                make_error(expr, format_dynamic_expr_error(&e, &available_functions), None)
             })?;
 
             let tmpl = env.get_template("expr").map_err(|e| {
-                HugsError::DynamicExprEval {
-                    file: source_path.display().to_string().into(),
-                    param_name: param_name.into(),
-                    expression: expr.clone(),
-                    reason: format_dynamic_expr_error(&e, &available_functions),
-                }
+                make_error(expr, format_dynamic_expr_error(&e, &available_functions), None)
             })?;
 
             let output = tmpl.render(()).map_err(|e| {
-                HugsError::DynamicExprEval {
-                    file: source_path.display().to_string().into(),
-                    param_name: param_name.into(),
-                    expression: expr.clone(),
-                    reason: format_dynamic_expr_error(&e, &available_functions),
-                }
+                make_error(expr, format_dynamic_expr_error(&e, &available_functions), None)
             })?;
 
             // Parse the newline-separated output
@@ -1565,6 +1776,7 @@ async fn scan_pages_raw(site_path: &PathBuf) -> Result<RawScanResult> {
                     param_name,
                     source_path: relative_path,
                     frontmatter,
+                    file_content: content,
                 })))
             } else {
                 let url = convert_file_path_to_url(&relative_path);
@@ -1611,6 +1823,7 @@ fn evaluate_dynamic_defs(
             &raw_def.frontmatter,
             &raw_def.source_path,
             pages,
+            &raw_def.file_content,
         )?;
 
         evaluated_defs.push(DynamicPageDef {
@@ -2264,6 +2477,11 @@ mod tests {
 
         // Expression using pages() to get URLs from blog posts
         let expr = "{{ pages(within='/blog/') | map(attribute='url') }}";
+        let file_content = format!(r#"---
+slug: "{}"
+---
+
+Content"#, expr);
         let mut frontmatter = serde_yaml::Mapping::new();
         frontmatter.insert(
             YamlValue::String("slug".to_string()),
@@ -2276,6 +2494,7 @@ mod tests {
             &yaml_fm,
             Path::new("test/[slug].md"),
             &pages,
+            &file_content,
         );
 
         assert!(result.is_ok(), "pages() should be available in frontmatter expressions: {:?}", result.err());
@@ -2299,6 +2518,11 @@ mod tests {
 
         // Expression with a typo (pges instead of pages)
         let expr = "{{ pges(within='/blog/') }}";
+        let file_content = format!(r#"---
+slug: "{}"
+---
+
+Content"#, expr);
         let mut frontmatter = serde_yaml::Mapping::new();
         frontmatter.insert(
             YamlValue::String("slug".to_string()),
@@ -2311,6 +2535,7 @@ mod tests {
             &yaml_fm,
             Path::new("test/[slug].md"),
             &pages,
+            &file_content,
         );
 
         assert!(result.is_err());
@@ -2627,6 +2852,408 @@ mod tests {
             }
             other => {
                 panic!("Expected TemplateRender error, got: {:?}", other);
+            }
+        }
+    }
+
+    #[test]
+    fn test_dynamic_expr_eval_error_shows_source_span() {
+        // Test that DynamicExprEval errors include source span pointing to the expression
+        let pages = Arc::new(vec![
+            PageInfo {
+                url: "/blog/post1".to_string(),
+                file_path: "blog/post1.md".to_string(),
+                frontmatter: YamlValue::Mapping(serde_yaml::Mapping::new()),
+            },
+        ]);
+
+        // Expression that will fail - using help filter which intentionally throws an error
+        // to display help information
+        let file_content = r#"---
+title: "{{ tag | title }}"
+tag: "{{ pages(within='/blog') | map(attribute='tags') | list | help }}"
+---
+
+Content here"#;
+
+        let frontmatter = markdown_frontmatter::parse::<YamlValue>(file_content)
+            .map(|(fm, _)| fm)
+            .unwrap();
+
+        let source_path = Path::new("blog/[tag].md");
+
+        let result = evaluate_param_values_with_pages(
+            "tag",
+            &frontmatter,
+            source_path,
+            &pages,
+            file_content,
+        );
+
+        assert!(result.is_err(), "Expression with |help should fail as it throws an error");
+        let err = result.unwrap_err();
+
+        // Check that the error includes source span information
+        match &err {
+            HugsError::DynamicExprEval { file, src, span, expression, help_text, .. } => {
+                // Should show the file path
+                let file_str = format!("{:?}", file);
+                assert!(
+                    file_str.contains("blog/[tag].md"),
+                    "Error should show file path 'blog/[tag].md', got: {}",
+                    file_str
+                );
+
+                // Should have source code attached
+                assert!(
+                    src.is_some(),
+                    "Error should include source code for display"
+                );
+
+                // Span should point to the expression in the frontmatter
+                let offset: usize = (*span).offset().into();
+                // The tag: field starts around position 32 in the content
+                assert!(
+                    offset > 20 && offset < 100,
+                    "Error span should point to the tag expression in frontmatter, got offset: {}",
+                    offset
+                );
+
+                // Should show the expression
+                assert!(
+                    expression.contains("pages(within='/blog')"),
+                    "Error should include the expression, got: {}",
+                    expression
+                );
+
+                // Should have helpful context about what Hugs was trying to do
+                assert!(
+                    help_text.contains("trying to determine the routes"),
+                    "Help text should explain Hugs was determining routes. Got: {}",
+                    help_text
+                );
+            }
+            other => {
+                panic!("Expected DynamicExprEval error, got: {:?}", other);
+            }
+        }
+    }
+
+    #[test]
+    fn test_dynamic_expr_eval_error_shows_source_span_for_unknown_function() {
+        // Test that errors from unknown functions include source span
+        let pages = Arc::new(vec![]);
+
+        // Expression with typo (unknownfunc instead of a real function)
+        let file_content = r#"---
+title: "Test"
+slug: "{{ unknownfunc() }}"
+---
+
+Content"#;
+
+        let frontmatter = markdown_frontmatter::parse::<YamlValue>(file_content)
+            .map(|(fm, _)| fm)
+            .unwrap();
+
+        let source_path = Path::new("test/[slug].md");
+
+        let result = evaluate_param_values_with_pages(
+            "slug",
+            &frontmatter,
+            source_path,
+            &pages,
+            file_content,
+        );
+
+        assert!(result.is_err(), "Expression with unknown function should fail");
+        let err = result.unwrap_err();
+
+        match &err {
+            HugsError::DynamicExprEval { src, span, file, .. } => {
+                // Should have source code
+                assert!(src.is_some(), "Error should include source code");
+
+                // Should show the file path
+                let file_str = format!("{:?}", file);
+                assert!(
+                    file_str.contains("test/[slug].md"),
+                    "Error should show file path, got: {}",
+                    file_str
+                );
+
+                // Span should point into the file
+                let offset: usize = (*span).offset().into();
+                assert!(
+                    offset > 0,
+                    "Span should point to the expression, got offset: {}",
+                    offset
+                );
+            }
+            other => {
+                panic!("Expected DynamicExprEval error, got: {:?}", other);
+            }
+        }
+    }
+
+    #[test]
+    fn test_dynamic_expr_help_filter_is_recognized() {
+        // Test that the |help filter is recognized in dynamic page expressions
+        // and produces helpful debug output (not "filter help is unknown")
+        let pages = Arc::new(vec![
+            PageInfo {
+                url: "/blog/post1".to_string(),
+                file_path: "blog/post1.md".to_string(),
+                frontmatter: YamlValue::Mapping(serde_yaml::Mapping::new()),
+            },
+        ]);
+
+        // Expression using |help filter - should be recognized and produce help output
+        let file_content = r#"---
+title: "Test"
+tag: "{{ pages(within='/blog') | help }}"
+---
+
+Content"#;
+
+        let frontmatter = markdown_frontmatter::parse::<YamlValue>(file_content)
+            .map(|(fm, _)| fm)
+            .unwrap();
+
+        let source_path = Path::new("blog/[tag].md");
+
+        let result = evaluate_param_values_with_pages(
+            "tag",
+            &frontmatter,
+            source_path,
+            &pages,
+            file_content,
+        );
+
+        // The help filter intentionally throws an error to display help info
+        assert!(result.is_err(), "Expression with |help should fail (to show help)");
+        let err = result.unwrap_err();
+
+        match &err {
+            HugsError::DynamicExprEval { reason, help_text, resolved_value, .. } => {
+                // The reason (span label) should match template errors
+                assert!(
+                    reason.contains("you asked for filter help here"),
+                    "Help filter should use same span label as template errors. Got: {}",
+                    reason
+                );
+
+                // Help text should say "You're filtering a <type>"
+                assert!(
+                    help_text.contains("You're filtering a"),
+                    "Help text should match template error format. Got: {}",
+                    help_text
+                );
+
+                // Help text should show available filters (like page template help)
+                assert!(
+                    help_text.contains("Filters you can apply:"),
+                    "Help text should list available filters. Got: {}",
+                    help_text
+                );
+
+                // Verify some specific filters are listed
+                assert!(
+                    help_text.contains("map") && help_text.contains("select") && help_text.contains("join"),
+                    "Help text should include common filters like map, select, join. Got: {}",
+                    help_text
+                );
+
+                // resolved_value should contain the decoded array
+                assert!(
+                    resolved_value.is_some(),
+                    "resolved_value should be set when |help is used"
+                );
+            }
+            other => {
+                panic!("Expected DynamicExprEval error, got: {:?}", other);
+            }
+        }
+    }
+
+    #[test]
+    fn test_dynamic_expr_help_test_is_recognized() {
+        // Test that the `is help` test is recognized in dynamic page expressions
+        // and produces helpful debug output (not "test help is unknown")
+        let pages = Arc::new(vec![
+            PageInfo {
+                url: "/blog/post1".to_string(),
+                file_path: "blog/post1.md".to_string(),
+                frontmatter: YamlValue::Mapping(serde_yaml::Mapping::new()),
+            },
+        ]);
+
+        // Expression using `is help` test - should be recognized and produce help output
+        // Note: We use selectattr which applies the test to each item
+        let file_content = r#"---
+title: "Test"
+tag: "{{ pages(within='/blog') | selectattr('url', 'help') | list }}"
+---
+
+Content"#;
+
+        let frontmatter = markdown_frontmatter::parse::<YamlValue>(file_content)
+            .map(|(fm, _)| fm)
+            .unwrap();
+
+        let source_path = Path::new("blog/[tag].md");
+
+        let result = evaluate_param_values_with_pages(
+            "tag",
+            &frontmatter,
+            source_path,
+            &pages,
+            file_content,
+        );
+
+        // The help test intentionally throws an error to display help info
+        assert!(result.is_err(), "Expression with `is help` should fail (to show help)");
+        let err = result.unwrap_err();
+
+        match &err {
+            HugsError::DynamicExprEval { reason, help_text, resolved_value, .. } => {
+                // The reason (span label) should match template errors
+                assert!(
+                    reason.contains("you asked for test help here"),
+                    "Help test should use same span label as template errors. Got: {}",
+                    reason
+                );
+
+                // Help text should say "You're testing a <type>"
+                assert!(
+                    help_text.contains("You're testing a"),
+                    "Help text should match template error format. Got: {}",
+                    help_text
+                );
+
+                // Help text should show available tests (like page template help)
+                assert!(
+                    help_text.contains("Tests you can use:"),
+                    "Help text should list available tests. Got: {}",
+                    help_text
+                );
+
+                // Verify some specific tests are listed
+                assert!(
+                    help_text.contains("defined") && help_text.contains("sequence") && help_text.contains("even"),
+                    "Help text should include common tests like defined, sequence, even. Got: {}",
+                    help_text
+                );
+
+                // resolved_value should contain the decoded value
+                assert!(
+                    resolved_value.is_some(),
+                    "resolved_value should be set when `is help` is used"
+                );
+            }
+            other => {
+                panic!("Expected DynamicExprEval error, got: {:?}", other);
+            }
+        }
+    }
+
+    #[test]
+    fn test_dynamic_expr_help_function_is_recognized() {
+        // Test that the help() function is recognized in dynamic page expressions
+        // and produces helpful debug output (not "function help is unknown")
+        let pages = Arc::new(vec![
+            PageInfo {
+                url: "/blog/post1".to_string(),
+                file_path: "blog/post1.md".to_string(),
+                frontmatter: YamlValue::Mapping(serde_yaml::Mapping::new()),
+            },
+        ]);
+
+        // Expression using help() function - should be recognized and produce help output
+        let file_content = r#"---
+title: "Test"
+tag: "{{ help() }}"
+---
+
+Content"#;
+
+        let frontmatter = markdown_frontmatter::parse::<YamlValue>(file_content)
+            .map(|(fm, _)| fm)
+            .unwrap();
+
+        let source_path = Path::new("blog/[tag].md");
+
+        let result = evaluate_param_values_with_pages(
+            "tag",
+            &frontmatter,
+            source_path,
+            &pages,
+            file_content,
+        );
+
+        // The help function intentionally throws an error to display help info
+        assert!(result.is_err(), "Expression with help() should fail (to show help)");
+        let err = result.unwrap_err();
+
+        match &err {
+            HugsError::DynamicExprEval { reason, help_text, .. } => {
+                // The reason (span label) should match template errors
+                assert!(
+                    reason.contains("you asked for help here"),
+                    "Help function should use same span label as template errors. Got: {}",
+                    reason
+                );
+
+                // Help text should show variables section with explanation
+                assert!(
+                    help_text.contains("Variables you can use:"),
+                    "Help text should have variables section. Got: {}",
+                    help_text
+                );
+                assert!(
+                    help_text.contains("no variables are pre-defined"),
+                    "Help text should explain no pre-defined variables. Got: {}",
+                    help_text
+                );
+
+                // Help text should show functions section
+                assert!(
+                    help_text.contains("Functions you can call:"),
+                    "Help text should have functions section. Got: {}",
+                    help_text
+                );
+                assert!(
+                    help_text.contains("pages()"),
+                    "Help text should list pages() function. Got: {}",
+                    help_text
+                );
+
+                // Help text should show filters section
+                assert!(
+                    help_text.contains("Filters you can apply:"),
+                    "Help text should have filters section. Got: {}",
+                    help_text
+                );
+                assert!(
+                    help_text.contains("map") && help_text.contains("select"),
+                    "Help text should include common filters. Got: {}",
+                    help_text
+                );
+
+                // Help text should show tests section
+                assert!(
+                    help_text.contains("Tests you can use:"),
+                    "Help text should have tests section. Got: {}",
+                    help_text
+                );
+                assert!(
+                    help_text.contains("defined") && help_text.contains("sequence"),
+                    "Help text should include common tests. Got: {}",
+                    help_text
+                );
+            }
+            other => {
+                panic!("Expected DynamicExprEval error, got: {:?}", other);
             }
         }
     }

@@ -322,13 +322,20 @@ pub enum HugsError {
     #[error("I couldn't evaluate the Jinja expression for `{param_name}` in {file}")]
     #[diagnostic(
         code(hugs::dynamic::expr_eval),
-        help("The expression `{expression}` failed to evaluate.\n\nMake sure it produces an array. Common functions:\n- range(end=5) -> [0, 1, 2, 3, 4]\n- range(start=1, end=6) -> [1, 2, 3, 4, 5]")
+        help("{help_text}")
     )]
     DynamicExprEval {
         file: StyledPath,
         param_name: StyledName,
         expression: String,
         reason: String,
+        #[source_code]
+        src: Option<NamedSource<String>>,
+        #[label("{reason}")]
+        span: SourceSpan,
+        /// The value the expression resolved to (if it evaluated but wasn't an array)
+        resolved_value: Option<String>,
+        help_text: String,
     },
 
     // === Macro Errors ===
@@ -1456,11 +1463,15 @@ impl Clone for HugsError {
                 param_name: param_name.clone(),
                 reason: reason.clone(),
             },
-            HugsError::DynamicExprEval { file, param_name, expression, reason } => HugsError::DynamicExprEval {
+            HugsError::DynamicExprEval { file, param_name, expression, reason, src, span, resolved_value, help_text } => HugsError::DynamicExprEval {
                 file: file.clone(),
                 param_name: param_name.clone(),
                 expression: expression.clone(),
                 reason: reason.clone(),
+                src: src.as_ref().map(|s| NamedSource::new(s.name().to_string(), s.inner().clone())),
+                span: *span,
+                resolved_value: resolved_value.clone(),
+                help_text: help_text.clone(),
             },
             HugsError::MacroParse { file, reason } => HugsError::MacroParse {
                 file: file.clone(),
