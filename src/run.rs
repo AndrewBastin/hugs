@@ -221,7 +221,7 @@ const BUILTIN_FILTERS: &[&str] = &[
     // String operations
     "capitalize", "escape", "e", "lower", "replace", "safe", "split", "title", "trim", "upper", "urlencode",
     // Sequence operations
-    "batch", "chain", "first", "join", "last", "length", "lines", "reverse", "slice", "sort", "unique", "zip",
+    "batch", "chain", "first", "flatten", "join", "last", "length", "lines", "reverse", "slice", "sort", "unique", "zip",
     // Numeric operations
     "abs", "max", "min", "round", "sum",
     // Object/Dictionary operations
@@ -455,6 +455,40 @@ fn create_datefmt_filter(
     }
 }
 
+/// Create the `flatten` filter for flattening nested sequences.
+///
+/// Usage in templates:
+///   {{ nested_list | flatten }}
+///   {{ [[1, 2], [3, 4]] | flatten }}  -> [1, 2, 3, 4]
+fn create_flatten_filter(
+) -> impl Fn(&State, Value) -> std::result::Result<Value, minijinja::Error> + Send + Sync + 'static
+{
+    |_state: &State, value: Value| {
+        let iter = value.try_iter().map_err(|_| {
+            minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("flatten: expected a sequence, got {}", value.kind()),
+            )
+        })?;
+
+        let mut result = Vec::new();
+        for item in iter {
+            match item.try_iter() {
+                Ok(inner_iter) => {
+                    for inner_item in inner_iter {
+                        result.push(inner_item);
+                    }
+                }
+                Err(_) => {
+                    result.push(item);
+                }
+            }
+        }
+
+        Ok(Value::from_iter(result))
+    }
+}
+
 /// Count words in markdown content, stripping HTML tags and markdown syntax
 fn count_words_in_markdown(text: &str) -> usize {
     let without_code_blocks = strip_code_blocks(text);
@@ -529,6 +563,9 @@ fn create_template_env(
 
     // Add the datefmt filter with the site's default locale
     env.add_filter("datefmt", create_datefmt_filter(default_language.to_string()));
+
+    // Add the flatten filter for flattening nested sequences
+    env.add_filter("flatten", create_flatten_filter());
 
     // Collect function names before adding help (includes builtins + our functions)
     let mut function_names: Vec<String> = env.globals().map(|(name, _)| name.to_string()).collect();
@@ -1283,6 +1320,9 @@ fn evaluate_param_values_with_pages(
             // Add the help filter for debugging dynamic page expressions
             env.add_filter("help", create_help_filter());
 
+            // Add the flatten filter for flattening nested sequences
+            env.add_filter("flatten", create_flatten_filter());
+
             // Add the help test for debugging
             env.add_test("help", create_help_test());
 
@@ -1398,6 +1438,9 @@ fn render_frontmatter_values(
 
     // Add the help filter (same as in page templates)
     env.add_filter("help", create_help_filter());
+
+    // Add the flatten filter for flattening nested sequences
+    env.add_filter("flatten", create_flatten_filter());
 
     let mut rendered_mapping = serde_yaml::Mapping::new();
 
@@ -2456,6 +2499,49 @@ mod tests {
         let tmpl = env.get_template("test").unwrap();
         let result = tmpl.render(minijinja::context! { date => "2024-01-15" }).unwrap();
         assert_eq!(result, "janvier");
+    }
+
+    #[test]
+    fn test_flatten_filter_basic() {
+        let mut env = Environment::new();
+        env.add_filter("flatten", create_flatten_filter());
+        env.add_template("test", "{{ items | flatten | join(',') }}").unwrap();
+
+        let tmpl = env.get_template("test").unwrap();
+        let result = tmpl.render(minijinja::context! {
+            items => vec![vec![1, 2], vec![3, 4]]
+        }).unwrap();
+        assert_eq!(result, "1,2,3,4");
+    }
+
+    #[test]
+    fn test_flatten_filter_mixed() {
+        let mut env = Environment::new();
+        env.add_filter("flatten", create_flatten_filter());
+        env.add_template("test", "{{ items | flatten | join(',') }}").unwrap();
+
+        let tmpl = env.get_template("test").unwrap();
+        let result = tmpl.render(minijinja::context! {
+            items => vec![
+                Value::from(1),
+                Value::from(vec![2, 3]),
+                Value::from(4)
+            ]
+        }).unwrap();
+        assert_eq!(result, "1,2,3,4");
+    }
+
+    #[test]
+    fn test_flatten_filter_empty() {
+        let mut env = Environment::new();
+        env.add_filter("flatten", create_flatten_filter());
+        env.add_template("test", "{{ items | flatten | join(',') }}").unwrap();
+
+        let tmpl = env.get_template("test").unwrap();
+        let result = tmpl.render(minijinja::context! {
+            items => Vec::<Vec<i32>>::new()
+        }).unwrap();
+        assert_eq!(result, "");
     }
 
     #[test]

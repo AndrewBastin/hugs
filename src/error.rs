@@ -728,7 +728,7 @@ impl TemplateHints {
             // Output formatting
             "format", "indent", "pprint", "tojson",
             // Hugs custom filters
-            "datefmt", "help",
+            "datefmt", "flatten", "help",
         ].into_iter().map(String::from).collect();
 
         // MiniJinja builtin tests (from minijinja 2.x documentation)
