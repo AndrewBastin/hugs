@@ -58,6 +58,10 @@ enum Command {
         /// Don't automatically open the browser
         #[arg(long)]
         no_open: bool,
+
+        /// Extract docs to a folder and print the path (useful for giving LLMs context)
+        #[arg(long, num_args = 0..=1)]
+        dump: Option<Option<PathBuf>>,
     },
 }
 
@@ -90,8 +94,12 @@ async fn main() -> miette::Result<()> {
         Command::New { name } => {
             crate::new::create_site(name).await?;
         }
-        Command::Doc { port, no_open } => {
-            crate::doc::run_doc_server(port, no_open).await?;
+        Command::Doc { port, no_open, dump } => {
+            if let Some(maybe_path) = dump {
+                crate::doc::dump_docs(maybe_path).await?;
+            } else {
+                crate::doc::run_doc_server(port, no_open).await?;
+            }
         }
     }
 

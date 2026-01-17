@@ -97,6 +97,34 @@ async fn page(path: web::Path<String>, state: web::Data<Arc<DocAppState>>) -> Ht
     }
 }
 
+/// Dump embedded docs to a folder (temp dir if path is None)
+pub async fn dump_docs(path: Option<PathBuf>) -> Result<()> {
+    let target_path = match path {
+        Some(p) => p,
+        None => {
+            // No path specified, use temp dir
+            let temp_dir = tempfile::tempdir()
+                .map_err(|e| HugsError::DocTempDir { cause: e })?;
+            // Intentionally leak the temp dir so it doesn't get cleaned up
+            let path = temp_dir.path().to_path_buf();
+            std::mem::forget(temp_dir);
+            path
+        }
+    };
+
+    extract_dir(&DOCS_DIR, &target_path).await?;
+
+    println!();
+    println!(
+        "  {} Documentation extracted to:",
+        "~".cyan().bold()
+    );
+    println!("  {}", target_path.display().cyan().bold());
+    println!();
+
+    Ok(())
+}
+
 pub async fn run_doc_server(port: Option<u16>, no_open: bool) -> Result<()> {
     console::status("Starting", "documentation server");
 
@@ -106,6 +134,7 @@ pub async fn run_doc_server(port: Option<u16>, no_open: bool) -> Result<()> {
     console::status("Extracted", docs_path.display());
 
     // Load site data
+    let docs_path_display = docs_path.clone();
     let app_data = AppData::load(docs_path, "doc").await?;
     let minify_config = MinifyConfig::new(app_data.config.build.minify);
 
@@ -126,6 +155,11 @@ pub async fn run_doc_server(port: Option<u16>, no_open: bool) -> Result<()> {
         "  {} Documentation server running at {}",
         "~".cyan().bold(),
         url.cyan().bold()
+    );
+    println!(
+        "  {} Coding agents (like Claude Code) can refer to the docs at {}",
+        "~".dimmed(),
+        docs_path_display.display().dimmed()
     );
     println!();
 
