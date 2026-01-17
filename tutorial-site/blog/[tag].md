@@ -1,11 +1,7 @@
 ---
 title: "{{ tag | title }}"
 description: "Posts tagged with {{ tag }}"
-tag:
-  - basics
-  - templates
-  - styling
-  - publishing
+tag: "{{ pages(within='/blog') | map(attribute='tags') | flatten | unique | sort }}"
 ---
 
 ### Posts tagged "{{ tag }}"

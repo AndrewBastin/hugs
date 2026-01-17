@@ -13,6 +13,9 @@ Every other markdown file here becomes a post: `my-post.md` turns into `/blog/my
 
 Work through the tutorial posts on everything you need to know about **Hugs** in order, or pick what you need. Each one builds on the last, but they stand alone too.
 
+## Browse by topic
+
+{% for tag in pages(within="/blog") | map(attribute="tags") | flatten | unique | sort %}[{{ tag }}](/blog/{{ tag }}){% if not loop.last %} · {% endif %}{% endfor %}
 
 ## Tutorial Posts
 
@@ -20,10 +23,6 @@ Work through the tutorial posts on everything you need to know about **Hugs** in
 {% if post.order %}- [{{ post.title }}]({{ post.url }}) — {{ post.description }}
 {% endif %}{% endfor %}
 
-
-## Browse by topic
-
-[basics](/blog/basics) · [templates](/blog/templates) · [styling](/blog/styling) · [publishing](/blog/publishing)
 
 
 Start with [Config File](/blog/config) — it's where everything begins.
