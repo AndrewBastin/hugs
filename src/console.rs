@@ -1,10 +1,5 @@
-use std::sync::OnceLock;
-use std::time::Instant;
-
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
-
-static BUILD_START: OnceLock<Instant> = OnceLock::new();
 
 fn status_style(verb: &str, color: owo_colors::AnsiColors) -> String {
     format!("{:>12}", verb.color(color).bold())
@@ -20,24 +15,6 @@ pub fn status_cyan(verb: &str, message: impl std::fmt::Display) {
 
 pub fn warn(message: impl std::fmt::Display) {
     eprintln!("{} {}", status_style("Warning", owo_colors::AnsiColors::Yellow), message);
-}
-
-pub fn start_build() {
-    BUILD_START.get_or_init(Instant::now);
-}
-
-pub fn finished(summary: impl std::fmt::Display) {
-    let elapsed = BUILD_START
-        .get()
-        .map(|start| start.elapsed())
-        .unwrap_or_default();
-
-    eprintln!(
-        "{} {} in {:.2}s",
-        status_style("Finished", owo_colors::AnsiColors::Green),
-        summary,
-        elapsed.as_secs_f64()
-    );
 }
 
 pub fn create_progress_bar(total: u64, message: &str) -> ProgressBar {

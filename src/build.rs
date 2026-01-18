@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 use tokio::task::JoinSet;
 use walkdir::WalkDir;
@@ -49,7 +50,8 @@ impl BuildWarnings {
 }
 
 pub async fn run_build(site_path: PathBuf, output_path: PathBuf) -> Result<()> {
-    console::start_build();
+    let build_start_instant = Instant::now();
+
     console::status("Building", format!("{} -> {}", site_path.display(), output_path.display()));
 
     let mut warnings = BuildWarnings::default();
@@ -84,10 +86,13 @@ pub async fn run_build(site_path: PathBuf, output_path: PathBuf) -> Result<()> {
     write_theme_css(&app_data, &output_path, &minify_config).await?;
 
     let sitemap_msg = if sitemap_generated { ", sitemap" } else { "" };
-    console::finished(format!(
-        "{} pages, {} feeds{}, {} assets",
-        page_count, feed_count, sitemap_msg, asset_count
-    ));
+    console::status(
+        "Finished",
+        &format!(
+            "{} pages, {} feeds{}, {} assets in {:.2}s",
+            page_count, feed_count, sitemap_msg, asset_count, build_start_instant.elapsed().as_secs_f64()
+        )
+    );
 
     // Display any collected warnings with fancy formatting
     warnings.display();
