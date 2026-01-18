@@ -84,9 +84,7 @@ async fn main() -> miette::Result<()> {
 
     match args.command {
         Command::Dev { path, port } => {
-            let port_explicit = port.is_some();
-            let port = port.unwrap_or(8080);
-            crate::dev::run_dev_server(path, port, port_explicit).await?;
+            crate::dev::run_dev_server(path, port).await?;
         }
         Command::Build { path, output } => {
             crate::build::run_build(path, output).await?;

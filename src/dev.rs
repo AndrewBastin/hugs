@@ -24,6 +24,9 @@ use crate::sitemap::generate_sitemap;
 /// Maximum number of port retry attempts before giving up
 const MAX_PORT_RETRIES: u16 = 50;
 
+/// The default port number assigned for the dev server if no port is explicitly given
+const DEFAULT_PORT: u16 = 8080;
+
 /// A port number that displays with bold cyan highlighting
 #[derive(Debug, Clone, Copy)]
 struct StyledPort(u16);
@@ -36,19 +39,17 @@ impl std::fmt::Display for StyledPort {
 
 /// Warning for port change during dev server startup
 #[derive(Error, Diagnostic, Debug, Clone)]
-#[error("I couldn't use the default port {default_port}, so I'm using port {actual_port} instead")]
+#[error("I couldn't use the default port {DEFAULT_PORT}, so I'm using port {actual_port} instead")]
 #[diagnostic(code(hugs::dev::port_changed), severity(warning))]
 struct PortChangedWarning {
-    default_port: StyledPort,
     actual_port: StyledPort,
     #[help]
     help_text: String,
 }
 
 impl PortChangedWarning {
-    fn new(default_port: u16, actual_port: u16) -> Self {
+    fn new(actual_port: u16) -> Self {
         Self {
-            default_port: StyledPort(default_port),
             actual_port: StyledPort(actual_port),
             help_text: format!(
                 "The default port was already in use. If you'd like me to fail instead of retrying, specify a port explicitly with {}",
@@ -488,7 +489,7 @@ fn start_file_watcher(
     Ok(watcher)
 }
 
-pub async fn run_dev_server(path: PathBuf, port: u16, port_explicit: bool) -> Result<()> {
+pub async fn run_dev_server(path: PathBuf, requested_port: Option<u16>) -> Result<()> {
     console::status("Starting", "development server with live reload");
     console::status("Watching", path.display());
 
@@ -530,13 +531,13 @@ pub async fn run_dev_server(path: PathBuf, port: u16, port_explicit: bool) -> Re
             cause: e,
         })?;
 
-    let (server, actual_port) = try_bind_server(Arc::clone(&state), &path, port, port_explicit)?;
+    let (server, actual_port) = try_bind_server(Arc::clone(&state), &path, requested_port)?;
 
     console::status("Listening", format!("http://127.0.0.1:{}", actual_port));
 
     // Display warning if port changed (after the server starting log)
-    if actual_port != port {
-        PortChangedWarning::new(port, actual_port).display();
+    if requested_port.is_none() && actual_port != DEFAULT_PORT {
+        PortChangedWarning::new(actual_port).display();
     }
 
     server
@@ -551,10 +552,9 @@ pub async fn run_dev_server(path: PathBuf, port: u16, port_explicit: bool) -> Re
 fn try_bind_server(
     state: Arc<DevAppState>,
     path: &PathBuf,
-    port: u16,
-    port_explicit: bool,
+    requested_port: Option<u16>,
 ) -> Result<(actix_web::dev::Server, u16)> {
-    if port_explicit {
+    if let Some(port) = requested_port {
         // Port was explicitly specified: fail immediately if unavailable
         let state_for_server = Arc::clone(&state);
         let server = HttpServer::new(move || {
@@ -571,6 +571,8 @@ fn try_bind_server(
 
         Ok((server.run(), port))
     } else {
+        let port: u16 = DEFAULT_PORT;
+
         // Default port: try subsequent ports until one is available
         for attempt in 0..MAX_PORT_RETRIES {
             let try_port = match port.checked_add(attempt) {
