@@ -11,9 +11,10 @@ tags:
 This entire site is embedded in the Hugs binary. Run `hugs doc` and it extracts to a temp folder and serves locally — no internet needed.
 
 ```bash
-hugs doc              # opens in browser
-hugs doc --port 9000  # specific port
-hugs doc --no-open    # don't auto-open
+hugs doc                # opens in browser
+hugs doc --port 9000    # specific port
+hugs doc --no-open      # don't auto-open
+hugs doc --dump <PATH>  # Dump the documentation site in a path
 ```
 
 Available as long as the command runs. `Ctrl+C` to stop.
