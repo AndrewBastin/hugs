@@ -167,6 +167,7 @@ The useful ones:
 - `trim` — strip whitespace
 - `default(value="fallback")` — provide a fallback
 - `join(sep=", ")` — combine array items
+- `flatten` — flatten nested arrays into one
 - `safe` — trust HTML (won't escape it)
 - `escape` — escape HTML characters
 
