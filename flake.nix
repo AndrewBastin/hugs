@@ -25,8 +25,6 @@
             packages = with pkgs; [
               cargo
               rustc
-              hugo
-              hyperfine
             ];
           };
         }
