@@ -16,24 +16,35 @@ mod run;
 mod sitemap;
 
 #[derive(Parser, Debug)]
+#[command(
+    about = "A cozy static site generator (っ◕‿◕)っ",
+    after_help = "I'm here to help you build beautiful static sites! Run `hugs <command> --help` for more info on a specific command.",
+    subcommand_help_heading = "What can I do for you",
+    disable_help_subcommand = true,
+    disable_help_flag = true,
+)]
 struct Args {
+    /// Show this help message
+    #[arg(short, long, action = clap::ArgAction::Help, global = true)]
+    help: (),
+
     #[command(subcommand)]
-    command: Command
+    command: Command,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Run the development server with live reloading
+    /// I'll run a development server with live reloading
     Dev {
         /// Path to the site directory (defaults to current directory)
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Port to run on (if specified, fails when unavailable; otherwise retries)
+        /// Port to run on (if specified, I'll fail when unavailable; otherwise I'll retry)
         #[arg(short, long)]
         port: Option<u16>,
     },
-    /// Build the static site
+    /// I'll build your static site
     Build {
         /// Path to the site directory (defaults to current directory)
         #[arg(default_value = ".")]
@@ -43,13 +54,13 @@ enum Command {
         #[arg(short, long, default_value = "dist")]
         output: PathBuf,
     },
-    /// Create a new Hugs site
+    /// I'll create a new Hugs site for you
     #[command(after_help = "If you don't provide a name, I'll ask you for one!")]
     New {
-        /// Name for your new site folder (created in current directory)
+        /// Name for your new site folder (I'll create it in the current directory)
         name: Option<PathBuf>,
     },
-    /// Open the Hugs documentation in your browser
+    /// I'll open the Hugs documentation in your browser
     Doc {
         /// Port to run the documentation server on
         #[arg(short, long)]
@@ -59,7 +70,7 @@ enum Command {
         #[arg(long)]
         no_open: bool,
 
-        /// Extract docs to a folder and print the path (useful for giving LLMs context)
+        /// I'll extract docs to a folder and print the path (useful for giving LLMs context)
         #[arg(long, num_args = 0..=1)]
         dump: Option<Option<PathBuf>>,
     },
