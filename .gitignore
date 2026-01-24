@@ -1,2 +1,14 @@
 /target
 .direnv
+
+# Editor/IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

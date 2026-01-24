@@ -1022,7 +1022,8 @@ pub struct MacroDefinition {
     pub params: Vec<MacroParam>,
     /// The raw body content (markdown/HTML/Jinja template)
     pub body: String,
-    /// Source file path for error reporting
+    /// Source file path for error reporting (kept for future use)
+    #[allow(dead_code)]
     pub source_path: PathBuf,
 }
 
