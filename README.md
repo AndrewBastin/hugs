@@ -26,12 +26,12 @@ If you use Nix to set up your website dev shell, you can something like the foll
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        hugs = hugs.packages.${system}.default;
+        hugs' = hugs.packages.${system}.default;
       in
         {
           # default package that builds your site
           packages.default = pkgs.runCommand "my-site" {
-              nativeBuildInputs = [ hugs ];
+              nativeBuildInputs = [ hugs' ];
           } ''
             hugs build ${./.} -o $out
           '';
@@ -40,7 +40,7 @@ If you use Nix to set up your website dev shell, you can something like the foll
           devShells.default = pkgs.mkShell {
             packages = with pkgs; [
               # Exposes the `hugs` command in your dev shell
-              hugs
+              hugs'
             ];
           };
         }
