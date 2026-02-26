@@ -83,6 +83,8 @@ pub struct SiteMetadata {
     pub default_image: Option<String>,
     /// Template for page titles, e.g. "{{ title }} | {{ site.title }}"
     pub title_template: Option<String>,
+    /// Raw HTML to inject at the end of <head> (e.g. analytics scripts)
+    pub head_extra: Option<String>,
 }
 
 fn default_language() -> String {

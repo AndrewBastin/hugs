@@ -59,8 +59,33 @@ language = "en-us"                              # default
 twitter_handle = "@yourname"                    # for Twitter/X cards
 default_image = "/og.png"                       # fallback social image
 title_template = "{{ title }} | {{ site.title }}" # how page titles look
+# head_extra = '...'                             # raw HTML injected into <head>
 ```
 {% endraw %}
+
+### Adding extra tags to `<head>`
+
+Need to add analytics, custom fonts, or other tags to `<head>`? Use `head_extra` to inject raw HTML into the `<head>` of every page:
+
+```toml
+[site]
+head_extra = '<script src="https://example.com/analytics.js"></script>'
+```
+
+For multi-line snippets, use a TOML multi-line string:
+
+```toml
+[site]
+head_extra = """
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXX"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XXXXX');
+</script>
+"""
+```
 
 ### Making page titles consistent
 

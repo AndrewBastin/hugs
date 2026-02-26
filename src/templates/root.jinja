@@ -44,6 +44,7 @@
     {%- if syntax_highlighting_enabled %}
     <link rel="stylesheet" type="text/css" href="{{ cache_bust(path='/highlight.css') }}">
     {%- endif %}
+    {{ head_extra | safe }}
   </head>
   <body hg-path="{{ path_class }}">
     <header>

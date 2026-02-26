@@ -837,6 +837,7 @@ impl AppData {
             dev_script: "",
             seo: SeoContext::default(),
             syntax_highlighting_enabled: false,
+            head_extra: "",
         };
 
         let reading_speed = config.build.reading_speed;
@@ -1894,6 +1895,7 @@ pub struct PageContent<'a> {
     pub dev_script: &'a str,
     pub seo: SeoContext,
     pub syntax_highlighting_enabled: bool,
+    pub head_extra: &'a str,
 }
 
 
@@ -1970,6 +1972,7 @@ pub async fn resolve_path_to_doc(
     let frontmatter_json = yaml_to_json_value(&raw_frontmatter);
 
     // Create merged context: PageContent fields + frontmatter fields
+    let head_extra = app_data.config.site.head_extra.as_deref().unwrap_or("");
     let initial_page_content = PageContent {
         title: "",
         header: &app_data.header_html,
@@ -1982,6 +1985,7 @@ pub async fn resolve_path_to_doc(
         dev_script: "",
         seo: SeoContext::default(),
         syntax_highlighting_enabled: false,
+        head_extra,
     };
 
     let mut context = serde_json::to_value(&initial_page_content).map_err(|e| HugsError::TemplateContext {
@@ -2079,6 +2083,7 @@ pub async fn resolve_dynamic_doc(
         })?;
 
     // Create merged context: PageContent fields + frontmatter fields + dynamic parameter
+    let head_extra = app_data.config.site.head_extra.as_deref().unwrap_or("");
     let initial_page_content = PageContent {
         title: "",
         header: &app_data.header_html,
@@ -2091,6 +2096,7 @@ pub async fn resolve_dynamic_doc(
         dev_script: "",
         seo: SeoContext::default(),
         syntax_highlighting_enabled: false,
+        head_extra,
     };
 
     let mut context = serde_json::to_value(&initial_page_content).map_err(|e| HugsError::TemplateContext {
@@ -2141,6 +2147,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
     let frontmatter_json = yaml_to_json_value(&raw_frontmatter);
 
     // Create merged context: PageContent fields + frontmatter fields
+    let head_extra = app_data.config.site.head_extra.as_deref().unwrap_or("");
     let initial_page_content = PageContent {
         title: "",
         header: &app_data.header_html,
@@ -2153,6 +2160,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
         dev_script: "",
         seo: SeoContext::default(),
         syntax_highlighting_enabled: false,
+        head_extra,
     };
 
     let mut context = serde_json::to_value(&initial_page_content).ok()?;
@@ -2197,6 +2205,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
 
     let main_content_html = markdown::to_html_with_options(&content_template_rendered, &markdown_options()).ok()?;
 
+    let head_extra_val = app_data.config.site.head_extra.as_deref().unwrap_or("");
     let content = PageContent {
         title: &rendered_title,
         header: &app_data.header_html,
@@ -2209,6 +2218,7 @@ pub async fn render_notfound_page(app_data: &AppData, dev_script: &str) -> Optio
         dev_script,
         seo,
         syntax_highlighting_enabled: app_data.config.build.syntax_highlighting.enabled,
+        head_extra: head_extra_val,
     };
 
     let cache_bust = app_data.cache_bust_function();
@@ -2408,6 +2418,7 @@ fn render_page_html_internal(
             reason: e.to_string(),
         })?;
 
+    let head_extra = app_data.config.site.head_extra.as_deref().unwrap_or("");
     let content = PageContent {
         title: &rendered_title,
         header: &app_data.header_html,
@@ -2420,6 +2431,7 @@ fn render_page_html_internal(
         dev_script,
         seo,
         syntax_highlighting_enabled: app_data.config.build.syntax_highlighting.enabled,
+        head_extra,
     };
 
     let cache_bust = app_data.cache_bust_function();
